@@ -159,13 +159,24 @@ function createPeepArtwork(label, color1, color2){
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
+/* ---------------- XSS defense (SECURITY_AUDIT.md C2) ----------------
+   All claim data (name/city/field/…) is attacker-controllable text that
+   reaches innerHTML sinks below — escape EVERY untrusted value. */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
+  ));
+}
+/* only https images may enter <img src> */
+function safeImgSrc(u){ return (typeof u === 'string' && /^https:\/\//.test(u)) ? u : ''; }
+
 /* ---------------- toasts (existing pattern) ---------------- */
 function showToast(message){
   const container = document.getElementById('toastContainer');
   if(!container) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
-  toast.innerHTML = `<i class="fa-solid fa-sparkles"></i> <span>${message}</span>`;
+  toast.innerHTML = `<i class="fa-solid fa-sparkles"></i> <span>${esc(message)}</span>`;
   container.appendChild(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
@@ -567,7 +578,7 @@ document.addEventListener('keydown', e => { if(e.key === 'Escape') closeDock(); 
 
 function openPerson(p, x, y){
   const g = GEO[p.country];
-  document.getElementById('pmAvatar').src = p.image || createPeepArtwork(p.name, p.color, p.sh);
+  document.getElementById('pmAvatar').src = safeImgSrc(p.image) || createPeepArtwork(p.name, p.color, p.sh);
   const badge = document.getElementById('pmBadge');
   const top20 = p.position && p.position <= 20;
   badge.textContent = (top20 ? '⭐ TOP 20 · ' : '') + p.field.toUpperCase();
@@ -1155,9 +1166,9 @@ function buildTop20(){
   list.innerHTML = ppl.length ? ppl.map(p => `
       <div class="top20-row${p.position <= 3 ? ' gold' : ''}" data-i="${p._i}">
         <span class="top20-rank">${MEDALS[p.position-1] || '#' + p.position}</span>
-        <span class="top20-name">${p.name}</span>
-        <span class="top20-loc"><img class="flag-img" src="flags/${p.country}.png" alt=""> ${p.city}</span>
-        <span class="top20-field">${p.field}</span>
+        <span class="top20-name">${esc(p.name)}</span>
+        <span class="top20-loc"><img class="flag-img" src="flags/${esc(p.country)}.png" alt=""> ${esc(p.city)}</span>
+        <span class="top20-field">${esc(p.field)}</span>
       </div>`).join('')
   : '<p class="top20-empty">The first 20 people claim the top of the map. Oldest members first.</p>';
   document.getElementById('top20Foot').textContent = ppl.length + ' OF 20 CLAIMED — RANKED BY OLDEST MEMBER';
@@ -1280,7 +1291,7 @@ function mtFillEdit(){
   document.getElementById('mtFind').hidden = true;
   document.getElementById('mtEdit').hidden = false;
   document.getElementById('mtSummary').innerHTML =
-    '<img class="flag-img" src="flags/' + c.country + '.png" alt=""> ' + c.name + ' · ' + GEO[c.country].name +
+    '<img class="flag-img" src="flags/' + esc(c.country) + '.png" alt=""> ' + esc(c.name) + ' · ' + esc(GEO[c.country].name) +
     '<span class="mono">POSITION #' + (c.position || '—') + ' · ' + (c.status === 'free' ? 'FOUNDER (FREE)' : 'PAID') +
     ' · ' + (c.spots || 1) + ' SPOT' + ((c.spots || 1) > 1 ? 'S' : '') + '</span>';
   document.getElementById('mtName').value = c.name || '';
@@ -1293,12 +1304,14 @@ function mtFillEdit(){
   document.getElementById('mtSocial').value = c.social || '';
   const ph = document.getElementById('mtPhoto');
   if(c.image_url){ ph.src = c.image_url; ph.hidden = false; } else { ph.hidden = true; }
+  if(ph.src && !/^https:/.test(ph.src)) ph.hidden = true;
 }
 
 async function mtSave(){
   if(!mtClaim) return;
   const body = {
     email: document.getElementById('mtEmail').value.trim(),
+    prove_name: mtClaim.name || '',   /* proof of ownership (SECURITY_AUDIT C1) */
     name: document.getElementById('mtName').value,
     bio: document.getElementById('mtBio').value,
     field: document.getElementById('mtField').value,

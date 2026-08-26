@@ -1,32 +1,72 @@
 /* POST /api/free-claim — founder-tier claim (FREE, no Bachs session).
    Only accepted while the count of real claims (paid + free) < FOUNDER_LIMIT.
-   Body: same as create-checkout. Returns the stored claim row (with cells). */
-const { N, WORLD, build, assignCells, macroKeyOf } = require('../world-core.js');
+   Body: same as create-checkout. Returns the stored claim row (with cells).
+   Security notes (SECURITY_AUDIT.md C2/C4/H3/H4): all text is sanitized
+   server-side, ILIKE wildcards escaped, cross-site posts rejected, and the
+   founder gate + position assignment go through an atomic SQL function
+   (insert_claim_sequential) when the schema migration has been applied. */
+const { N, WORLD, build, assignCells, macroKeyOf, FIELDS } = require('../world-core.js');
 const getSupabase = require('../lib/supabase.js');
+const { cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
 
 const FOUNDER_LIMIT = 200;
 const CLAIMS_PER_IP_PER_DAY = 3;
 const COUNTRY_CODES = new Set(Object.values(WORLD).flat().filter(c => c !== 'O'));
+const FIELD_NAMES = new Set(FIELDS.map(f => f.name));
 
-function clientIp(req){
-  const fwd = (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])) || '';
-  return fwd.split(',')[0].trim() || 'unknown';
-}
 function todayUtcStart(){
   return new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString();
 }
 
+/* Insert a claim atomically (advisory-lock serialized, founder gate, unique
+   position) when the SQL function exists; fall back to the legacy path. */
+async function insertClaim(supa, row, founderGate) {
+  if (typeof supa.rpc === 'function') {
+    try {
+      const { data, error } = await supa.rpc('insert_claim_sequential', {
+        p_row: row, p_founder_gate: founderGate,
+      });
+      if (error && /function .* does not exist/i.test(error.message)) { /* not migrated */ }
+      else if (error) return { error: error.message };
+      else if (data && data.error) return { error: data.error, gate: data.error === 'founder_full' };
+      else if (data) return { claim: data };
+    } catch (e) { /* fall through to legacy path */ }
+  }
+  /* legacy: check-then-insert (documented race — see audit C4) with a
+     position-collision retry */
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { count } = await supa
+      .from('claims')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['paid', 'free']);
+    const { data: claim, error } = await supa.from('claims').insert(
+      Object.assign({}, row, { position: (count || 0) + 1 })
+    ).select().single();
+    if (!error) return { claim };
+    if (/duplicate/i.test(error.message || '')) {
+      if (/identity/i.test(error.message)) return { error: 'That name + email is already on the map — your data is your identity, and it’s taken.' };
+      continue; /* position collision — retry with a fresh count */
+    }
+    return { error: error.message };
+  }
+  return { error: 'Could not place the claim — please retry.' };
+}
+
 exports.default = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  if (!originAllowed(req)) return res.status(403).json({ error: 'Cross-origin claims are not allowed.' });
 
-  const body = req.body || {};
-  const name = String(body.name || '').trim();
-  const spots = Number(body.spots || 1);
-  const country = String(body.country || '').toUpperCase();
+  const raw = req.body || {};
+  const body = cleanClaimBody(raw);
+  const name = body.name;
+  const spots = Number(raw.spots || 1);
+  const country = String(raw.country || '').toUpperCase();
 
   if (!name) return res.status(400).json({ error: 'name is required' });
   if (![1, 5, 10].includes(spots)) return res.status(400).json({ error: 'spots must be 1, 5 or 10' });
   if (!COUNTRY_CODES.has(country)) return res.status(400).json({ error: 'unknown country' });
+  if (raw.field && !FIELD_NAMES.has(String(raw.field))) return res.status(400).json({ error: 'unknown field' });
+  if (raw.email && !isEmail(body.email)) return res.status(400).json({ error: 'invalid email' });
 
   let supa;
   try { supa = getSupabase(); } catch (e) {
@@ -34,13 +74,13 @@ exports.default = async (req, res) => {
   }
 
   /* identity = data: same name + email can only claim once */
-  const email = String(body.email || '').trim() ||
+  const email = body.email ||
     (name.toLowerCase().replace(/[^a-z0-9]+/g, '.') + '@turf.local');
   const { data: existing } = await supa
     .from('claims')
     .select('id')
-    .ilike('name', name)
-    .ilike('email', email)
+    .ilike('name', escapeIlike(name))
+    .ilike('email', escapeIlike(email))
     .limit(1)
     .maybeSingle();
   if (existing) {
@@ -89,7 +129,7 @@ exports.default = async (req, res) => {
 
   /* optional photo: verify the uploaded object exists, store its public URL */
   let imageUrl = null;
-  const imagePath = String(body.image_path || '');
+  const imagePath = String(raw.image_path || '');
   if (/^[0-9a-f-]{36}\.webp$/.test(imagePath)) {
     try {
       const { data: obj, error: statErr } = await supa.storage.from('people').stat(imagePath);
@@ -97,7 +137,7 @@ exports.default = async (req, res) => {
     } catch (e) { /* ignore unreadable path */ }
   }
 
-  const { data: claim, error } = await supa.from('claims').insert({
+  const row = {
     name,
     bio: body.bio || null,
     field: body.field || null,
@@ -112,10 +152,15 @@ exports.default = async (req, res) => {
     cells: cellsArr,
     macro: macroKey,
     image_url: imageUrl,
-    position: c + 1, /* oldest member first: rank = settled claims + 1 */
     status: 'free',
-  }).select().single();
+  };
 
-  if (error) return res.status(500).json({ error: error.message });
-  return res.status(200).json(claim);
+  const result = await insertClaim(supa, row, true);
+  if (result.gate) return res.status(402).json({ error: 'Founder tier is full — payment is now active.' });
+  if (result.error) {
+    const taken = /already on the map/.test(result.error);
+    return res.status(taken ? 409 : 500).json({ error: result.error });
+  }
+  /* legacy path stores position inside insertClaim; rpc path returns it */
+  return res.status(200).json(result.claim);
 };

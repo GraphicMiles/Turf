@@ -13,6 +13,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="style.css" />
+  <!-- Defense in depth (SECURITY_AUDIT.md C2): claim text is attacker-controllable;
+       CSP blunts any escaping slip. Bachs overlay + fonts + supabase images allowed. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://checkout.bachs.io; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co https://checkout.bachs.io; frame-src https://checkout.bachs.io; object-src 'none'; base-uri 'self'; form-action 'self'" />
 </head>
 <body>
 

@@ -3,6 +3,13 @@
    Bachs webhook receiver. Verifies the HMAC-SHA256 signature, dedupes by
    event id, and fulfils claims (this is the source of truth for payment).
    Subscribe to: collection.succeeded, collection.failed, checkout.expired
+
+   Security (SECURITY_AUDIT.md C4/C5): settlement goes through the atomic
+   `settle_claim()` SQL function (advisory-lock + unique-safe position) when
+   the schema migration is applied, with the legacy path as fallback. A
+   `collection.succeeded` that matches NO claim row is queued in
+   pending_fulfilments (replayed by /api/claim-status) instead of being
+   silently dropped — "customer paid, no claim" is now recoverable.
    ========================================================================== */
 const crypto = require('crypto');
 const getSupabase = require('../../lib/supabase.js');
@@ -54,13 +61,39 @@ exports.default = async (req, res) => {
     if (cid) {
       if (event.type === 'collection.succeeded') {
         /* rank by oldest member: position = settled claims so far + 1 */
-        const { count } = await supa
-          .from('claims')
-          .select('id', { count: 'exact', head: true })
-          .in('status', ['paid', 'free']);
-        await supa.from('claims')
-          .update({ status: 'paid', charge_id: event.data.charge_id || null, position: (count || 0) + 1 })
-          .eq('checkout_id', cid);
+        let settled = false;
+
+        if (typeof supa.rpc === 'function') {
+          try {
+            const { data, error } = await supa.rpc('settle_claim', {
+              p_checkout_id: cid, p_charge_id: (event.data && event.data.charge_id) || null,
+            });
+            if (error && !/function .* does not exist/i.test(error.message)) throw error;
+            if (!error) settled = !!(data && data.settled);
+          } catch (e) { /* fall back to legacy path */ }
+        }
+
+        if (!settled) {
+          const { count } = await supa
+            .from('claims')
+            .select('id', { count: 'exact', head: true })
+            .in('status', ['paid', 'free']);
+          const { data: matched } = await supa.from('claims')
+            .update({ status: 'paid', charge_id: event.data.charge_id || null, position: (count || 0) + 1 })
+            .eq('checkout_id', cid)
+            .select('id');
+          settled = !!(matched && matched.length);
+        }
+
+        if (!settled) {
+          /* no claim row (yet): queue for replay instead of dropping it */
+          await supa.from('pending_fulfilments').insert({
+            event_id: event.id || null,
+            checkout_id: cid,
+            charge_id: (event.data && event.data.charge_id) || null,
+            payload: event,
+          });
+        }
       } else if (event.type === 'collection.failed') {
         await supa.from('claims')
           .update({ status: 'failed' })

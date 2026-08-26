@@ -186,12 +186,13 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('create-checkout: 3 claims today → 429', r.code === 429);
   global.fetch = realFetch;
 
-  /* ---------- my-claim (email is the key) ---------- */
+  /* ---------- my-claim (email is the key + prove_name) ---------- */
   const myClaim = req_('api/my-claim.js');
-  const claimRow = { id: 'cl_1', name: 'Raji', email: 'raji@x.com', bio: 'old', status: 'free', position: 1, cells: [1555], country: 'NGA' };
+  const claimRow = { id: 'cl_1', name: 'Raji', email: 'raji@x.com', bio: 'old', status: 'free', position: 1, cells: [1555], country: 'NGA', ip: '5.6.7.8', charge_id: 'ch_x', checkout_id: 'chk_x' };
   currentSupa = makeSupa(freshState({ myClaims: [claimRow] }));
   r = await myClaim({ method: 'GET', query: { email: 'RAJI@X.com' } }, fakeRes());
   T('my-claim GET: found by email (case-insensitive)', r.code === 200 && r.body.claims.length === 1 && r.body.claims[0].name === 'Raji');
+  T('my-claim GET: no ip/email/charge/checkout leak (C1)', r.body.claims[0].ip === undefined && r.body.claims[0].email === undefined && r.body.claims[0].charge_id === undefined && r.body.claims[0].checkout_id === undefined);
   currentSupa = makeSupa(freshState({ myClaims: [] }));
   r = await myClaim({ method: 'GET', query: { email: 'nobody@x.com' } }, fakeRes());
   T('my-claim GET: 404 when unknown', r.code === 404);
@@ -199,10 +200,31 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('my-claim GET: 400 bad email', r.code === 400);
   currentSupa = makeSupa(freshState({ myClaims: [claimRow] }));
   r = await myClaim({ method: 'POST', body: { email: 'raji@x.com', bio: 'new bio', project: 'New EP' } }, fakeRes());
-  T('my-claim POST: edit saved', r.code === 200 && r.body.claim && r.body.claim.id === 'cl_1');
+  T('my-claim POST: no prove_name → 401 (C1 fix)', r.code === 401);
+  r = await myClaim({ method: 'POST', body: { email: 'raji@x.com', prove_name: 'Wrong', bio: 'x' } }, fakeRes());
+  T('my-claim POST: wrong prove_name → 401', r.code === 401);
+  r = await myClaim({ method: 'POST', body: { email: 'raji@x.com', prove_name: 'raji', bio: 'new bio', project: 'New EP' } }, fakeRes());
+  T('my-claim POST: edit saved with proof', r.code === 200 && r.body.claim && r.body.claim.id === 'cl_1');
   currentSupa = makeSupa(freshState({ myClaims: [claimRow], existing: true }));
-  r = await myClaim({ method: 'POST', body: { email: 'raji@x.com', name: 'SomeoneElse' } }, fakeRes());
+  r = await myClaim({ method: 'POST', body: { email: 'raji@x.com', prove_name: 'Raji', name: 'SomeoneElse' } }, fakeRes());
   T('my-claim POST: name clash → 409', r.code === 409);
+
+  /* ---------- security regressions (SECURITY_AUDIT.md) ---------- */
+  const { cleanText, escapeIlike, isEmail } = require(path.join(ROOT, 'lib/validate.js'));
+  T('validate: cleanText strips tags + control chars', cleanText('<img src=x onerror=alert(1)>Raji', 40) === 'img src=x onerror=alert(1)Raji' && cleanText('a\u0000b', 10) === 'ab');
+  T('validate: cleanText caps length', cleanText('a'.repeat(500), 24).length === 24);
+  T('validate: escapeIlike escapes wildcards (H3)', escapeIlike('a%b_c\\d') === 'a\\%b\\_c\\\\d');
+  T('validate: isEmail accepts/limits', isEmail('raji@x.com') === true && isEmail('raji+tag@x.co') === true && isEmail('nope') === false && isEmail('a@b.c') === false && isEmail('x@' + 'y'.repeat(200) + '.com') === false);
+
+  currentSupa = makeSupa(freshState({ settledCount: 5 }));
+  r = await freeClaim({ method: 'POST', body: { name: 'Evil', field: 'Music', country: 'NGA', city: 'Lagos<img src=x onerror=alert(1)>', project: 'p'.repeat(999), spots: 1 }, headers: {} }, fakeRes());
+  T('free-claim: XSS payload sanitized before storage (C2)', r.code === 200 && !/[<>]/.test(currentSupa.state.lastInsert.city) && currentSupa.state.lastInsert.project.length <= 48);
+  currentSupa = makeSupa(freshState({ settledCount: 5 }));
+  r = await freeClaim({ method: 'POST', body: { name: 'Evil2', field: 'Hacking', country: 'NGA', spots: 1 }, headers: {} }, fakeRes());
+  T('free-claim: unknown field → 400', r.code === 400);
+  currentSupa = makeSupa(freshState({ settledCount: 5 }));
+  r = await freeClaim({ method: 'POST', body: { name: 'Evil3', field: 'Music', country: 'NGA', email: 'not-an-email', spots: 1 }, headers: {} }, fakeRes());
+  T('free-claim: invalid email → 400', r.code === 400);
 
   /* ---------- upload-url ---------- */
   const uploadUrl = req_('api/upload-url.js');
@@ -219,7 +241,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   r = await uploadUrl({ method: 'POST', body: { name: 'Raji', type: 'image/webp', size: 1000 }, headers: {} }, fakeRes());
   T('upload-url: duplicate identity → 409', r.code === 409);
   r = await uploadUrl({ method: 'POST', body: { name: 'Raji', owner: 'raji@x.com', type: 'image/webp', size: 1000 }, headers: {} }, fakeRes());
-  T('upload-url: owner skips identity check', r.code === 200);
+  T('upload-url: verified owner (email matches a claim) → 200', r.code === 200);
 
   /* ---------- live stats: visit + heartbeat + summary ---------- */
   const visit = req_('api/visit.js');

@@ -32,6 +32,16 @@ A living map of people on Earth — not roads, cities, or businesses. A map of h
 
 ₦100 per position moved up: `cost = (current − target) × ₦100`, ceiling `10,000 × ₦100` (100×100 grid). Identity = same name+email. See `docs/bachs-integration.md` §14.
 
+## Security
+
+See **[SECURITY_AUDIT.md](SECURITY_AUDIT.md)** for the full audit and the hardening applied (account-takeover fix on My Turf, stored-XSS fixes, RLS tightening, race conditions on the founder tier / positions / payment fulfilment, DDoS/cost-amplification points and what still needs edge rate limiting). Key behavior changes:
+
+- **My Turf edits** now require the claim email **and** the exact registered name (`prove_name`) — plan a magic-link/OTP flow before scaling.
+- All claim text is sanitized + length-capped server-side; `field` is whitelist-only.
+- `web`/`social` are stored as text — if you ever render them as links, force `https://`.
+- Photo uploads: 12 signed URLs per IP per day; the `owner` param must now match an existing claim.
+- After pulling: run the updated `supabase/schema.sql` (atomic claim/settlement functions, upload-mint + fulfilment-queue tables, tightened RLS) and set `ALLOWED_ORIGINS` in your env.
+
 ## Payments (Bachs)
 
 - **Sandbox first**, live after KYC — going live is a key swap.
