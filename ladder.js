@@ -15,6 +15,53 @@
   }
   function safeSrc(u) { return (typeof u === 'string' && /^https:\/\//.test(u)) ? u : ''; }
   function naira(n) { return '₦' + Number(n || 0).toLocaleString('en-NG'); }
+  /* ---------------- image upload pipeline (claim photo + profile photo) ---------------- */
+  function compressImage(file) {
+    return new Promise((resolve, reject) => {
+      try {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          try {
+            const S = 512;
+            const scale = Math.min(1, S / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            cv.getContext('2d').drawImage(img, 0, 0, w, h);
+            cv.toBlob(b => {
+              URL.revokeObjectURL(url);
+              if (b) resolve({ blob: b }); else reject(new Error('could not compress image'));
+            }, 'image/webp', 0.8);
+          } catch (e2) { URL.revokeObjectURL(url); reject(e2); }
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')); };
+        img.src = url;
+      } catch (e) { reject(e); }
+    });
+  }
+
+  async function uploadPhoto(file, who, extra) {
+    const c = await compressImage(file);
+    const up = await fetch('api/upload-url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ name: who, kind: 'image', type: 'image/webp', size: c.blob.size }, extra || {})),
+    });
+    const u = await up.json().catch(() => ({}));
+    if (!up.ok || !u.uploadUrl) throw new Error(u.error || 'photo upload unavailable');
+    const put = await fetch(u.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/webp' }, body: c.blob });
+    if (!put.ok) throw new Error('photo upload failed');
+    return u.path;
+  }
+
+  /* ---------------- edit code reveal (persistent, copyable) ---------------- */
+  function showCodeModal(code) {
+    if (!code) return;
+    $('codeVal').textContent = String(code).toUpperCase();
+    $('codeModal').classList.add('open');
+  }
+
   function showToast(message) {
     const c = document.getElementById('toastContainer');
     if (!c) return;
@@ -32,6 +79,7 @@
   let loadedTo = 0;
   let myAuth = null;        /* {code} or {email, name} */
   let myClaim = null;
+  let myLadder = null;      /* {amount, rank} from my-claim responses */
   let selected = null;
   let backendError = null;
 
@@ -191,6 +239,7 @@
   let overtakeTarget = null;
 
   function buildClaimForm() {
+    try { $('cfPhoto').value = ''; } catch (e) {}
     $('cfField').innerHTML = (FIELDS.length ? FIELDS : [{ name: 'Builder' }]).map(f => '<option value="' + esc(f.name) + '">' + esc(f.name) + '</option>').join('');
     const codes = Object.keys(GEO).sort((a, b) => (GEO[a].name || a).localeCompare(GEO[b].name || b));
     $('cfCountry').innerHTML = codes.map(c => '<option value="' + c + '">' + (GEO[c].flag || '') + ' ' + esc(GEO[c].name || c) + '</option>').join('');
@@ -236,7 +285,16 @@
     $('claimModal').classList.add('open');
   }
 
+  let submitting = false;
   async function submitClaim() {
+    if (submitting) return;
+    submitting = true;
+    $('cfSubmit').classList.add('is-busy');
+    try { await doSubmitClaim(); }
+    finally { submitting = false; $('cfSubmit').classList.remove('is-busy'); }
+  }
+
+  async function doSubmitClaim() {
     const name = $('cfName').value.trim();
     if (!name) { showToast('Enter your name first ✍️'); return; }
     const profile = {
@@ -252,11 +310,21 @@
     };
     const freeMode = !overtakeTarget && meta.mode === 'free' && !backendError;
 
+    /* ---- cover photo (shared by both flows): compress → upload-url → PUT ---- */
+    let imagePath = null;
+    const photoFile = ($('cfPhoto') && $('cfPhoto').files && $('cfPhoto').files[0]) || null;
+    if (photoFile) {
+      showToast('Uploading your photo… 📸');
+      try { imagePath = await uploadPhoto(photoFile, name); }
+      catch (e) { showToast('Photo failed (' + e.message + ') — claiming without it.'); }
+    }
+
     /* ---- FREE founder claim: instant, no Bachs ---- */
     if (freeMode) {
       try {
         const r = await fetch('api/ladder-free-claim', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({}, profile, imagePath ? { image_path: imagePath } : null)),
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) {
@@ -265,14 +333,15 @@
         }
         stashEditCode(data.edit_code, name);
         $('claimModal').classList.remove('open');
-        showToast('You are ON THE LADDER 🪜 Founder spot secured — save your edit code!');
         loadLadder(false);
+        showCodeModal(data.edit_code);
       } catch (e) { showToast(e.message + ' — could not claim.'); }
       return;
     }
 
     /* ---- paid join / overtake: Bachs checkout ---- */
     const body = Object.assign({}, profile);
+    if (imagePath) body.image_path = imagePath;
     if (overtakeTarget) body.target_claim_id = overtakeTarget.holder.claim_id;
     else body.amount = Math.max(BASE_PRICE, Math.round(Number($('cfAmount').value) || BASE_PRICE));
 
@@ -290,7 +359,8 @@
     $('claimModal').classList.remove('open');
     showToast('Pay ' + naira(data.amount) + ' to secure your spot…');
     if (window.Bachs && Bachs.Checkout && Bachs.Checkout.open) Bachs.Checkout.open({ checkoutUrl: data.checkout_url });
-    pollCheckout(data.checkout_id);
+    else window.open(data.checkout_url, '_blank', 'noopener');
+    pollCheckout(data.checkout_id, 12, data.edit_code);
   }
 
   function stashEditCode(code, name) {
@@ -306,15 +376,16 @@
     catch (e) { return null; }
   }
 
-  async function pollCheckout(checkoutId, tries) {
+  async function pollCheckout(checkoutId, tries, editCode) {
     tries = tries || 12;
     for (let k = 0; k < tries; k++) {
       try {
         const r = await fetch('api/claim-status?checkout_id=' + encodeURIComponent(checkoutId));
         const s = await r.json();
         if (s.status === 'paid') {
-          showToast('You are ON THE LADDER 🪜 Save your edit code!');
+          showToast('You are ON THE LADDER 🪜');
           loadLadder(false);
+          showCodeModal(editCode || savedCode());
           return;
         }
         if (s.status === 'failed' || s.status === 'expired') { showToast('Payment didn’t complete — your spot is still open.'); return; }
@@ -326,7 +397,10 @@
   /* ---------------- my spot ---------------- */
   function openMy() {
     const code = savedCode();
-    $('myCodeHint').textContent = code ? 'SAVED ON THIS DEVICE: ' + code : 'NO EDIT CODE ON THIS DEVICE — SHOWN ONCE WHEN YOU CLAIM';
+    if (code) { $('myKey').value = code; $('myProveRow').hidden = true; }
+    $('myCodeHint').textContent = code
+      ? 'EDIT CODE SAVED ON THIS DEVICE — PRE-FILLED, JUST HIT FIND'
+      : 'ENTER YOUR EDIT CODE (SHOWN WHEN YOU CLAIMED) OR YOUR CLAIM EMAIL + NAME';
     $('myEdit').hidden = true; $('myFind').hidden = false;
     $('myModal').classList.add('open');
   }
@@ -350,6 +424,7 @@
       const data = await r.json();
       if (!r.ok || !data.claim) throw new Error(data.error || 'not found');
       myClaim = data.claim;
+      myLadder = data.ladder || null;
       fillMy();
     } catch (e) { myAuth = null; showToast(e.message); }
   }
@@ -358,7 +433,7 @@
     const c = myClaim;
     $('myFind').hidden = true; $('myEdit').hidden = false;
     const entry = rows.find(x => x.holder && x.holder.claim_id === c.id);
-    $('myRank').textContent = entry ? '#' + entry.rank : 'ON THE LADDER';
+    $('myRank').textContent = entry ? '#' + entry.rank : (myLadder && myLadder.rank ? '#' + myLadder.rank : 'ON THE LADDER');
     $('myName').textContent = c.name || '';
     const g = GEO[c.country] || { name: '' };
     $('myMeta').textContent = [c.field, c.city, g.name].filter(Boolean).join(' · ');
@@ -405,11 +480,20 @@
       name: myClaim.name, city: $('myCity').value, bio: $('myBio').value,
       field: $('myField').value, web: $('myWeb').value, social: $('mySocial').value,
     }, authBody());
+    /* profile photo: compress → upload → image_path (auth so the identity
+       rule on upload-url accepts reuse of our own name) */
+    const photoFile = ($('myPhoto') && $('myPhoto').files && $('myPhoto').files[0]) || null;
+    if (photoFile) {
+      const upAuth = myAuth && myAuth.code ? { code: myAuth.code } : (myAuth && myAuth.email ? { owner: myAuth.email } : {});
+      try { body.image_path = await uploadPhoto(photoFile, myClaim.name, upAuth); }
+      catch (e) { showToast('Photo failed (' + e.message + ') — saving the rest.'); }
+    }
     try {
       const r = await fetch('api/my-claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'failed');
       myClaim = data.claim;
+      if (photoFile) { $('myPhoto').value = ''; }
       showToast('Saved ✓'); loadLadder(false);
     } catch (e) { showToast(e.message + ' — not saved.'); }
   }
@@ -495,6 +579,19 @@
     $('dockClose').onclick = () => $('dock').classList.remove('open');
     $('claimClose').onclick = () => $('claimModal').classList.remove('open');
     $('myClose').onclick = () => $('myModal').classList.remove('open');
+    $('codeClose').onclick = () => $('codeModal').classList.remove('open');
+    $('codeCopy').onclick = async () => {
+      const code = $('codeVal').textContent.trim();
+      let copied = false;
+      try { await navigator.clipboard.writeText(code); copied = true; } catch (e) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = code; document.body.appendChild(ta); ta.select();
+          copied = document.execCommand('copy'); ta.remove();
+        } catch (e2) { copied = false; }
+      }
+      showToast(copied ? 'Code copied — keep it safe 🔐' : 'Copy failed — write it down: ' + code);
+    };
     $('cfSubmit').onclick = submitClaim;
     $('btnMySpot').onclick = openMy;
     $('myFindBtn').onclick = myFind;
@@ -505,7 +602,7 @@
       $('myProveRow').hidden = /^[A-Za-z0-9]{4}[-\s]?[A-Za-z0-9]{4}$/.test(raw) || !raw.includes('@');
     });
     $('btnMore').onclick = () => loadLadder(true);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('dock').classList.remove('open'); $('claimModal').classList.remove('open'); $('myModal').classList.remove('open'); } });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('dock').classList.remove('open'); $('claimModal').classList.remove('open'); $('myModal').classList.remove('open'); $('codeModal').classList.remove('open'); } });
 
     try {
       const p = new URLSearchParams(window.location.search);

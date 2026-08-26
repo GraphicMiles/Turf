@@ -140,6 +140,8 @@
           <div><label class="form-label">WEB</label><input class="form-input" id="myWeb" type="text" maxlength="60" /></div>
           <div><label class="form-label">SOCIAL</label><input class="form-input" id="mySocial" type="text" maxlength="60" /></div>
         </div>
+        <div class="form-row"><label class="form-label">PROFILE PHOTO</label>
+          <input class="form-input" id="myPhoto" type="file" accept="image/webp,image/jpeg,image/png" /></div>
         <span class="cta full" id="mySave"><p>Save changes ✓</p><i class="fa-solid fa-floppy-disk"></i></span>
         <div class="feed-head mono" style="margin-top:16px">MY FEED — POST MEDIA TO YOUR SPOT</div>
         <div class="composer">
@@ -150,6 +152,18 @@
         <div class="feed" id="myFeed"></div>
         <p class="mono micro-note">IMAGES ≤5MB · GIF ≤8MB · VIDEO ≤25MB (≤90s) · AUDIO ≤10MB (≤3min)</p>
       </div>
+    </div>
+  </div>
+
+  <!-- ======================= modal: edit code reveal ======================= -->
+  <div class="modal" id="codeModal">
+    <div class="modal-card" style="max-width:420px;text-align:center">
+      <button class="dock-close" id="codeClose"><i class="fa-solid fa-xmark"></i></button>
+      <h2 class="dock-title" style="padding-right:0">🔑 Your edit code</h2>
+      <p class="dock-sub">This is the key to your spot — save it. You'll need it (or your claim email + name) to edit your spot and post media.</p>
+      <div class="code-val mono" id="codeVal">----</div>
+      <span class="cta full" id="codeCopy"><p>Copy code</p><i class="fa-solid fa-copy"></i></span>
+      <p class="mono micro-note">ALSO SAVED ON THIS DEVICE (🔑 MY SPOT FINDS IT AUTOMATICALLY)</p>
     </div>
   </div>
 

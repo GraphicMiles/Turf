@@ -21,7 +21,7 @@ const LADDER_ROWS = {
 };
 const META = { taken: 2, basePrice: 100, rowSize: 20, firstSpotFree: false, mode: 'free', freeRemaining: 198, founderLimit: 200, recent: [{ action: 'overtake', amount: 20000, name: 'Ada' }], lockedTargets: ['c2'] };
 const POSTS = { posts: [{ id: 'p1', kind: 'video', url: 'https://dummy.supabase.co/people/x.mp4', caption: 'my launch', created_at: '2026-08-26T00:00:00Z' }] };
-const CLAIM_BY_CODE = { claim: { id: 'c1', name: 'Ada', field: 'Music', country: 'NGA', city: 'Lagos', status: 'paid', cells: [] } };
+const CLAIM_BY_CODE = { claim: { id: 'c1', name: 'Ada', field: 'Music', country: 'NGA', city: 'Lagos', status: 'paid', cells: [] }, ladder: { amount: 20000, rank: 1 } };
 
 const vc = new VirtualConsole();
 const errors = [];
@@ -36,6 +36,8 @@ const dom = new JSDOM(html, {
         if (String(url).indexOf('meta=1') >= 0) return META;
         if (String(url).indexOf('api/spot-post') >= 0) return POSTS;
         if (String(url).indexOf('api/my-claim') >= 0) return CLAIM_BY_CODE;
+        if (String(url).indexOf('api/upload-url') >= 0) return { uploadUrl: 'https://dummy.supabase.co/storage/v1/object/upload/signature/people/x.webp', path: '11111111-1111-4111-8111-111111111111.webp' };
+        if (String(url).indexOf('api/ladder-free-claim') >= 0) return { claim: { id: 'c3', name: 'Zoe' }, edit_code: 'FR33-CODE', entry_amount: 100 };
         if (String(url).indexOf('api/ladder-checkout') >= 0) return { checkout_url: 'https://checkout.bachs.io/c/x', checkout_id: 'chk_x', edit_code: 'ABCD-2345', amount: 100, action: 'join' };
         if (String(url).indexOf('api/ladder') === 0) return LADDER_ROWS;
         return {};
@@ -76,6 +78,22 @@ setTimeout(async () => {
   d.getElementById('myFindBtn').click();
   await new Promise(r => setTimeout(r, 150));
   T('my spot unlocks with edit code (no email needed)', d.getElementById('myEdit').hidden === false && d.getElementById('myName').textContent.indexOf('Ada') >= 0);
+  T('my spot rank comes from ladder info', d.getElementById('myRank').textContent.indexOf('#1') >= 0);
+  T('my spot has a profile photo picker', d.getElementById('myPhoto') !== null && d.getElementById('myPhoto').type === 'file');
+
+  /* free founder claim → persistent copyable edit-code modal */
+  d.getElementById('myClose').click();
+  d.getElementById('btnClaimTop').click();
+  d.getElementById('cfName').value = 'Zoe';
+  d.getElementById('cfSubmit').click();
+  await new Promise(r => setTimeout(r, 150));
+  T('free claim opens the edit-code modal', d.getElementById('codeModal').classList.contains('open') && d.getElementById('codeVal').textContent.indexOf('FR33-CODE') >= 0);
+  T('free claim stashes code on device', (w.localStorage.getItem('turf_edit_codes') || '').indexOf('FR33-CODE') >= 0);
+  d.getElementById('codeCopy').click();
+  await new Promise(r => setTimeout(r, 50));
+  T('code copy shows a toast', /cop/i.test(d.getElementById('toastContainer').textContent));
+  d.getElementById('codeClose').click();
+  T('code modal closes', d.getElementById('codeModal').classList.contains('open') === false);
 
   console.log(fail === 0 ? '\nALL LADDER FRONTEND CHECKS PASSED' : '\n' + fail + ' LADDER FRONTEND CHECKS FAILED');
   process.exit(fail === 0 ? 0 : 1);

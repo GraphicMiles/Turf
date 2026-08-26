@@ -46,6 +46,19 @@ async function findClaims(supa, email) {
   return data || [];
 }
 
+/* Ladder placement for a claim: amount + computed rank (count of higher
+   payers + 1). Returns null if the claim isn't on the ladder. */
+async function ladderInfo(supa, claimId) {
+  try {
+    const { data: e } = await supa
+      .from('ladder_entries').select('amount').eq('claim_id', claimId).limit(1).maybeSingle();
+    if (!e) return null;
+    const { count } = await supa
+      .from('ladder_entries').select('id', { count: 'exact', head: true }).gt('amount', e.amount);
+    return { amount: e.amount, rank: (count || 0) + 1 };
+  } catch (err) { return null; }
+}
+
 /* Look up a SETTLED claim by edit-code hash. */
 async function findByCode(supa, code) {
   const { data, error } = await supa
@@ -103,7 +116,7 @@ exports.default = async (req, res) => {
       const claims = await findClaims(supa, rawEmail);
       if (!claims.length) return res.status(404).json({ error: 'No turf found for that email.' });
 
-      if (req.method === 'GET') return res.status(200).json({ claims: claims.map(safeClaim) });
+      if (req.method === 'GET') return res.status(200).json({ claims: claims.map(safeClaim), ladder: await ladderInfo(supa, claims[0].id) });
       if (req.method !== 'POST') return res.status(405).json({ error: 'GET or POST' });
 
       target = claims[0]; /* newest claim for this email */
@@ -149,14 +162,14 @@ exports.default = async (req, res) => {
 
     /* code-auth with nothing to update = "unlock/lookup" — return the claim */
     if (!Object.keys(patch).length) {
-      if (viaCode) return res.status(200).json({ claim: safeClaim(target) });
+      if (viaCode) return res.status(200).json({ claim: safeClaim(target), ladder: await ladderInfo(supa, target.id) });
       return res.status(400).json({ error: 'Nothing to update.' });
     }
 
     const { data: updated, error } = await supa
       .from('claims').update(patch).eq('id', target.id).select(SAFE_COLUMNS).single();
     if (error) return res.status(500).json({ error: error.message });
-    return res.status(200).json({ claim: safeClaim(updated) });
+    return res.status(200).json({ claim: safeClaim(updated), ladder: await ladderInfo(supa, target.id) });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
