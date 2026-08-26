@@ -203,11 +203,34 @@ if(window.ResizeObserver) new ResizeObserver(resize).observe(wrap);
 
 /* low-res layer: one canvas pixel per spot */
 const low = document.createElement('canvas'); low.width = N; low.height = N;
+/* ---- country flags: every empty land tile wears its country's flag ---- */
+const flagCache = {};        /* code -> HTMLImageElement (false while loading) */
+let flagPalette = null;      /* flags/palette.json — muted national tint per country */
+function flagTint(code){
+  const f = flagPalette && flagPalette[code];
+  if(!f) return LAND_EMPTY;
+  return 'rgb(' + Math.round(f[0]*0.62 + 255*0.38) + ',' + Math.round(f[1]*0.62 + 248*0.38) + ',' + Math.round(f[2]*0.62 + 238*0.38) + ')';
+}
+function getFlag(code){
+  if(flagCache[code]) return flagCache[code];
+  flagCache[code] = false;
+  const img = new Image();
+  img.onload = () => { flagCache[code] = img; draw(); };
+  img.src = 'flags/' + code + '.png';
+  return false;
+}
+function preloadFlags(){ Object.keys(macros).forEach(getFlag); }
+async function loadFlagPalette(){
+  try{
+    const r = await fetch('flags/palette.json', { cache: 'force-cache' });
+    if(r.ok){ flagPalette = await r.json(); rebuildLow(); draw(); }
+  }catch(e){}
+}
 function rebuildLow(){
   const lc = low.getContext('2d');
   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
     const c = cells[y*N+x];
-    lc.fillStyle = c.ocean ? OCEAN : (c.person ? c.person.color : LAND_EMPTY);
+    lc.fillStyle = c.ocean ? OCEAN : (c.person ? c.person.color : flagTint(WORLD[c.mr][c.mc]));
     lc.fillRect(x, y, 1, 1);
   }
 }
@@ -255,7 +278,17 @@ function draw(){
     for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
       const c = cells[y*N+x], px = ox+x*s, py = oy+y*s;
       if(c.ocean){ ctx.fillStyle = OCEAN; ctx.fillRect(px,py,s,s); continue; }
-      if(!c.person){ ctx.fillStyle = LAND_EMPTY; ctx.fillRect(px,py,s,s); continue; }
+      if(!c.person){
+        const code = WORLD[c.mr][c.mc];
+        ctx.fillStyle = flagTint(code);
+        ctx.fillRect(px,py,s,s);
+        const fl = flagCache[code];
+        if(fl && fl.complete && fl.naturalWidth){
+          const fs2 = s * 0.86;
+          ctx.drawImage(fl, px + (s-fs2)/2, py + (s-fs2)/2, fs2, fs2);
+        }
+        continue;
+      }
       const p = c.person;
       ctx.fillStyle = p.color;
       ctx.fillRect(px+1, py+1, s-2, s-2);
@@ -436,6 +469,7 @@ document.getElementById('pmDice').onclick = explore;
 document.getElementById('pmExplore').onclick = explore;
 document.getElementById('pmCountries').onclick = () => openDock('countries');
 document.getElementById('pmTop20').onclick = () => { buildTop20(); openDock('top20'); };
+document.getElementById('pmMyTurf').onclick = openMyTurf;
 document.getElementById('pmClaim').onclick = () => openClaim();
 document.getElementById('introExplore').onclick = explore;
 document.getElementById('introClaim').onclick = () => openClaim();
@@ -446,7 +480,7 @@ document.getElementById('dockClose').onclick = closeDock;
    DOCK — person card / claim form / countries
    ========================================================================== */
 const dock = document.getElementById('dock');
-const views = { person: document.getElementById('viewPerson'), claim: document.getElementById('viewClaim'), top20: document.getElementById('viewTop20'), countries: document.getElementById('viewCountries') };
+const views = { person: document.getElementById('viewPerson'), claim: document.getElementById('viewClaim'), top20: document.getElementById('viewTop20'), myturf: document.getElementById('viewMyTurf'), countries: document.getElementById('viewCountries') };
 function openDock(name){
   Object.keys(views).forEach(k => views[k].hidden = (k !== name));
   dock.classList.add('open');
@@ -463,7 +497,7 @@ function openPerson(p, x, y){
   badge.style.background = top20 ? 'var(--accent-yellow)' : p.color;
   document.getElementById('pmName').textContent = p.name;
   document.getElementById('pmField').textContent = p.field;
-  document.getElementById('pmLoc').textContent = `${g.flag} ${p.city}, ${g.name}`;
+  document.getElementById('pmLoc').innerHTML = '<img class="flag-img" src="flags/' + p.country + '.png" alt=""> ' + p.city + ', ' + g.name;
   document.getElementById('pmBio').textContent = p.bio;
   document.getElementById('pmProjectArt').src = createPeepArtwork(p.project, p.sh, p.color);
   document.getElementById('pmProject').textContent = p.project;
@@ -1003,7 +1037,7 @@ function buildCountries(){
     const toNext = m.capacity - c;
     return `
       <div class="country-row" data-code="${m.code}">
-        <span class="country-flag">${GEO[m.code].flag}</span>
+        <span class="country-flag"><img class="flag-img" src="flags/${m.code}.png" alt=""></span>
         <span class="country-name">${GEO[m.code].name}</span>
         <span class="country-count">${c.toLocaleString('en-US')}</span>
         <span class="country-bar"><span class="fill" style="transform:scaleX(${pct/100})"></span></span>
@@ -1038,7 +1072,7 @@ function buildTop20(){
       <div class="top20-row${p.position <= 3 ? ' gold' : ''}" data-i="${p._i}">
         <span class="top20-rank">${MEDALS[p.position-1] || '#' + p.position}</span>
         <span class="top20-name">${p.name}</span>
-        <span class="top20-loc">${GEO[p.country].flag} ${p.city}</span>
+        <span class="top20-loc"><img class="flag-img" src="flags/${p.country}.png" alt=""> ${p.city}</span>
         <span class="top20-field">${p.field}</span>
       </div>`).join('')
   : '<p class="top20-empty">The first 20 people claim the top of the map. Oldest members first.</p>';
@@ -1062,6 +1096,128 @@ function refreshIntroCount(){
   buildCountries();
 }
 
+/* ==========================================================================
+   MY TURF — email is the key to your spot. Find it, edit it (spot, country,
+   position and spots stay fixed — only your profile can change).
+   ========================================================================== */
+let mtClaim = null;
+let mtNewPhoto = null;
+
+function openMyTurf(){
+  mtClaim = null;
+  mtNewPhoto = null;
+  document.getElementById('mtFind').hidden = false;
+  document.getElementById('mtEdit').hidden = true;
+  document.getElementById('mtNote').textContent = '';
+  document.getElementById('mtPhoto').hidden = true;
+  document.getElementById('mtPhotoNote').textContent = '';
+  openDock('myturf');
+}
+
+async function mtFind(){
+  const email = document.getElementById('mtEmail').value.trim();
+  if(!email){ showToast('Enter your claim email ✍️'); return; }
+  document.getElementById('mtNote').textContent = '';
+  try{
+    const r = await fetch('api/my-claim?email=' + encodeURIComponent(email), { cache: 'no-store' });
+    const data = await r.json().catch(() => ({}));
+    if(!r.ok){
+      document.getElementById('mtNote').textContent = r.status === 404
+        ? 'NO TURF FOUND FOR THAT EMAIL — CLAIM YOURS BELOW'
+        : (data.error || 'LOOKUP FAILED');
+      return;
+    }
+    const list = data.claims || [];
+    if(!list.length){
+      document.getElementById('mtNote').textContent = 'NO TURF FOUND FOR THAT EMAIL — CLAIM YOURS BELOW';
+      return;
+    }
+    mtClaim = list[0];
+    mtFillEdit();
+    if(list.length > 1) document.getElementById('mtNote').textContent = 'NOTE: ' + list.length + ' CLAIMS ON THIS EMAIL — EDITING THE NEWEST';
+  }catch(e){
+    document.getElementById('mtNote').textContent = 'BACKEND UNREACHABLE (DEMO MODE) — MY TURF IS LIVE ON THE DEPLOYED SITE';
+  }
+}
+
+function mtFillEdit(){
+  const c = mtClaim;
+  document.getElementById('mtFind').hidden = true;
+  document.getElementById('mtEdit').hidden = false;
+  document.getElementById('mtSummary').innerHTML =
+    '<img class="flag-img" src="flags/' + c.country + '.png" alt=""> ' + c.name + ' · ' + GEO[c.country].name +
+    '<span class="mono">POSITION #' + (c.position || '—') + ' · ' + (c.status === 'free' ? 'FOUNDER (FREE)' : 'PAID') +
+    ' · ' + (c.spots || 1) + ' SPOT' + ((c.spots || 1) > 1 ? 'S' : '') + '</span>';
+  document.getElementById('mtName').value = c.name || '';
+  document.getElementById('mtBio').value = c.bio || '';
+  const fieldSel = document.getElementById('mtField');
+  fieldSel.innerHTML = FIELDS.map(f => '<option' + (f.name === c.field ? ' selected' : '') + '>' + f.name + '</option>').join('');
+  document.getElementById('mtCity').value = c.city || '';
+  document.getElementById('mtProject').value = c.project || '';
+  document.getElementById('mtWeb').value = c.web || '';
+  document.getElementById('mtSocial').value = c.social || '';
+  const ph = document.getElementById('mtPhoto');
+  if(c.image_url){ ph.src = c.image_url; ph.hidden = false; } else { ph.hidden = true; }
+}
+
+async function mtSave(){
+  if(!mtClaim) return;
+  const body = {
+    email: document.getElementById('mtEmail').value.trim(),
+    name: document.getElementById('mtName').value,
+    bio: document.getElementById('mtBio').value,
+    field: document.getElementById('mtField').value,
+    city: document.getElementById('mtCity').value,
+    project: document.getElementById('mtProject').value,
+    web: document.getElementById('mtWeb').value,
+    social: document.getElementById('mtSocial').value,
+  };
+  try{
+    if(mtNewPhoto){
+      const up = await fetch('api/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: body.name || mtClaim.name, owner: body.email, type: 'image/webp', size: mtNewPhoto.blob.size }),
+      });
+      const u = await up.json().catch(() => ({}));
+      if(!up.ok || !u.uploadUrl) throw new Error(u.error || 'Photo upload unavailable');
+      const put = await fetch(u.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/webp' }, body: mtNewPhoto.blob });
+      if(!put.ok) throw new Error('Photo upload failed');
+      body.image_path = u.path;
+    }
+    const r = await fetch('api/my-claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if(!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+    mtClaim = data.claim;
+    mtNewPhoto = null;
+    mtRefreshMapPerson();
+    mtFillEdit();
+    showToast('Saved — your turf is updated ✓');
+  }catch(e){
+    showToast(e.message + (e.message && /taken/i.test(e.message) ? '' : ' — changes not saved.'));
+  }
+}
+
+function mtRefreshMapPerson(){
+  const c = mtClaim;
+  if(!c || !c.cells) return;
+  const person = cells[c.cells[0]] && cells[c.cells[0]].person;
+  if(person){
+    person.name = c.name;
+    person.bio = c.bio || person.bio;
+    person.field = c.field || person.field;
+    person.city = c.city || person.city;
+    person.project = c.project || person.project;
+    person.web = c.web; person.social = c.social;
+    person.image = c.image_url || null;
+    draw();
+  }
+}
+
 /* ---- init ---- */
 buildClaimForm();
 buildCountries();
@@ -1069,5 +1225,24 @@ buildTop20();
 refreshIntroCount();
 resize();
 updateClaimUI();
+preloadFlags();
+loadFlagPalette();
 probeLive();
 initBachs();
+document.getElementById('mtFindBtn').onclick = mtFind;
+document.getElementById('mtSave').onclick = mtSave;
+document.getElementById('mtPhotoBtn').addEventListener('click', () => document.getElementById('mtPhotoInput').click());
+document.getElementById('mtPhotoInput').addEventListener('change', async () => {
+  const file = document.getElementById('mtPhotoInput').files && document.getElementById('mtPhotoInput').files[0];
+  if(!file) return;
+  try{
+    mtNewPhoto = await compressImage(file);
+    const ph = document.getElementById('mtPhoto');
+    ph.src = mtNewPhoto.dataUrl;
+    ph.hidden = false;
+    document.getElementById('mtPhotoNote').textContent = 'NEW PHOTO READY — SAVE TO APPLY';
+  }catch(e){
+    document.getElementById('mtPhotoNote').textContent = 'COULD NOT READ THAT IMAGE';
+  }
+  document.getElementById('mtPhotoInput').value = '';
+});

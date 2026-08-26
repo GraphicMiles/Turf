@@ -25,18 +25,22 @@ exports.default = async (req, res) => {
     return res.status(500).json({ error: 'Supabase not configured: ' + e.message });
   }
 
-  /* same identity rule as claims: don't mint uploads for data that's taken */
+  /* identity rule: don't mint uploads for data that's taken —
+     unless the requester is the OWNER of that data (editing their own spot) */
   const email = String(body.email || '').trim() ||
     (name.toLowerCase().replace(/[^a-z0-9]+/g, '.') + '@turf.local');
-  const { data: existing } = await supa
-    .from('claims')
-    .select('id')
-    .ilike('name', name)
-    .ilike('email', email)
-    .limit(1)
-    .maybeSingle();
-  if (existing) {
-    return res.status(409).json({ error: 'That name + email is already on the map — your data is your identity, and it’s taken.' });
+  const owner = String(body.owner || '').trim().toLowerCase();
+  if (!owner) {
+    const { data: existing } = await supa
+      .from('claims')
+      .select('id')
+      .ilike('name', name)
+      .ilike('email', email)
+      .limit(1)
+      .maybeSingle();
+    if (existing) {
+      return res.status(409).json({ error: 'That name + email is already on the map — your data is your identity, and it’s taken.' });
+    }
   }
 
   const path = crypto.randomUUID() + '.webp';

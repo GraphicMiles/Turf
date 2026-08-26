@@ -27,6 +27,9 @@
       <span class="pm-btn" id="pmExplore" title="Take me somewhere">
         <i class="fa-solid fa-dice"></i><span class="lbl">Explore</span>
       </span>
+      <span class="pm-btn" id="pmMyTurf" title="My Turf — your email is the key to your spot">
+        <i class="fa-solid fa-key"></i><span class="lbl">My Turf</span>
+      </span>
       <span class="pm-btn" id="pmTop20" title="Top 20 — highest visibility on the map">
         <i class="fa-solid fa-trophy"></i><span class="lbl">Top 20</span>
       </span>
@@ -179,6 +182,66 @@
 
         <span class="cta full" id="cfSubmit"><p id="cfSubmitLabel">Claim free → founder spot</p><i class="fa-solid fa-bolt"></i></span>
       </form>
+    </section>
+
+    <!-- VIEW: MY TURF (email is the key to your spot) -->
+    <section class="dock-view" id="viewMyTurf" hidden>
+      <h2 class="dock-title"><i class="fa-solid fa-key" style="color:var(--accent-orange)"></i> My Turf</h2>
+      <p class="dock-sub">Your email is the key to your spot. Enter it to find your turf and edit it.</p>
+
+      <div id="mtFind">
+        <div class="form-row">
+          <label class="form-label" for="mtEmail">YOUR CLAIM EMAIL</label>
+          <input class="form-input" id="mtEmail" type="email" placeholder="you@example.com" autocomplete="off" />
+        </div>
+        <span class="cta full" id="mtFindBtn"><p>Find my spot →</p><i class="fa-solid fa-magnifying-glass"></i></span>
+      </div>
+
+      <div id="mtEdit" hidden>
+        <div class="mt-summary" id="mtSummary"></div>
+        <div class="form-row">
+          <label class="form-label" for="mtName">NAME</label>
+          <input class="form-input" id="mtName" type="text" maxlength="24" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="mtBio">SHORT BIO</label>
+          <input class="form-input" id="mtBio" type="text" maxlength="80" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="mtField">FIELD</label>
+          <select class="form-input" id="mtField"></select>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="mtCity">CITY</label>
+          <input class="form-input" id="mtCity" type="text" maxlength="24" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="mtProject">PROJECT / CREATION</label>
+          <input class="form-input" id="mtProject" type="text" maxlength="48" />
+        </div>
+        <div class="form-row split">
+          <div>
+            <label class="form-label" for="mtWeb">WEBSITE</label>
+            <input class="form-input" id="mtWeb" type="text" maxlength="60" />
+          </div>
+          <div>
+            <label class="form-label" for="mtSocial">SOCIAL LINKS</label>
+            <input class="form-input" id="mtSocial" type="text" maxlength="60" />
+          </div>
+        </div>
+        <div class="form-row">
+          <span class="form-label">PHOTO</span>
+          <div class="photo-row">
+            <img class="mt-photo" id="mtPhoto" alt="" hidden />
+            <span class="pm-btn small" id="mtPhotoBtn"><i class="fa-solid fa-camera"></i><span class="lbl">Change photo</span></span>
+            <span class="photo-note mono" id="mtPhotoNote"></span>
+          </div>
+          <input type="file" id="mtPhotoInput" accept="image/*" style="display:none" />
+        </div>
+        <span class="cta full" id="mtSave"><p>Save changes</p><i class="fa-solid fa-check"></i></span>
+      </div>
+
+      <p class="mt-note mono" id="mtNote"></p>
     </section>
 
     <!-- VIEW: TOP 20 -->

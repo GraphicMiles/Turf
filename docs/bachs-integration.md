@@ -452,3 +452,26 @@ Pay to claim a higher spot — **no account needed, because the data is the iden
 - **Search** ("find my friend"): not built; the cheap path is a `pg_trgm` index on `name` + `GET /api/people?q=`.
 - **Ops:** Supabase logs + Vercel function logs; Bachs portal shows webhook delivery health + replay.
 - **Backups:** Supabase PITR (paid plans); `webhook_events` can be pruned nightly (30-day retention) — it's dedupe history only.
+
+---
+
+## 16. My Turf — email is the key to your spot
+
+No accounts, no passwords: **the claim email is the key**.
+
+- `GET /api/my-claim?email=…` — finds your settled claim(s) (case-insensitive). UI: **My Turf** (🔑 top bar) → enter email → "Find my spot".
+- `POST /api/my-claim { email, …fields }` — owner edits their spot.
+  - **Editable:** name (re-checked against the map for clashes), bio, field, city, project, web, socials, photo.
+  - **Immutable:** the spot itself — cells, position, country, spot count. (Position changes happen via the phase-2 upgrade.)
+- Photo changes go through the same signed-upload pipeline; `upload-url` accepts an `owner` email, which skips the identity-taken check (an owner re-uploading their own data is not a duplicate).
+- Multiple claims on one email (allowed: 3/IP/day with different names): the UI edits the **newest** and notes the rest.
+- Security note: anyone who knows/guesses the email can edit that profile. Deliberately simple per product decision — the upgrade path is a one-time OTP/magic-link sent to that email (schema-ready: add a `verify_code` column).
+
+## 17. Country flags
+
+- Source: [flagdownload.com](https://flagdownload.com/) — round flat PNGs, 128×128, one per country in `flags/` (42 files, ~300 KB, committed).
+- **Map rendering:**
+  - Every **empty land tile wears its country's flag** — at macro zoom each country box reads as its flag; zoom into a country and all 100 boxes show the flag; a claimed spot replaces its flag with the person (field color → initials → name).
+  - World-zoom bitmap (`/api/worldmap.png`) uses each flag's average color (muted 62/38 toward cream, from `flags/palette.json`) so the low-res world still reads as a flag mosaic.
+- **Lists:** country list, Top 20, person cards, and My Turf summaries show the round flag image (emoji fallback data still in `GEO` for toasts).
+- Adding a country: drop `flags/CODE.png` + one entry in `flags/palette.json` (regenerate: average the opaque pixels).

@@ -5,6 +5,7 @@
 const zlib = require('zlib');
 const getSupabase = require('../lib/supabase.js');
 const { N, WORLD, build, FIELDS } = require('../world-core.js');
+const FLAG_PALETTE = require('../flags/palette.json');
 
 const OCEAN = [0xdf, 0xea, 0xf8];
 const LAND = [0xff, 0xf8, 0xee];
@@ -12,6 +13,17 @@ const FIELD_COLOR = {};
 FIELDS.forEach(f => {
   FIELD_COLOR[f.name] = [parseInt(f.color.slice(1, 3), 16), parseInt(f.color.slice(3, 5), 16), parseInt(f.color.slice(5, 7), 16)];
 });
+
+/* empty land reads as the country's muted national tint (flag average, softened) */
+function flagTint(code) {
+  const f = FLAG_PALETTE[code];
+  if (!f) return LAND;
+  return [
+    Math.round(f[0] * 0.62 + LAND[0] * 0.38),
+    Math.round(f[1] * 0.62 + LAND[1] * 0.38),
+    Math.round(f[2] * 0.62 + LAND[2] * 0.38),
+  ];
+}
 
 /* ---- minimal PNG encoder (RGBA, 8-bit) ---- */
 const CRC_TABLE = (() => {
@@ -62,9 +74,10 @@ async function renderWorld() {
   const seed = build();
   const colors = new Array(N * N);
   for (let y = 0; y < 10; y++) for (let x = 0; x < 10; x++) {
-    const land = WORLD[y][x] !== 'O';
+    const code = WORLD[y][x];
+    const tint = code !== 'O' ? flagTint(code) : OCEAN;
     for (let yy = 0; yy < 10; yy++) for (let xx = 0; xx < 10; xx++) {
-      colors[(y * 10 + yy) * N + (x * 10 + xx)] = land ? LAND : OCEAN;
+      colors[(y * 10 + yy) * N + (x * 10 + xx)] = tint;
     }
   }
   const { data: claims, error } = await supa
