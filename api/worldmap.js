@@ -74,10 +74,9 @@ async function renderWorld() {
   const seed = build();
   const colors = new Array(N * N);
   for (let y = 0; y < 10; y++) for (let x = 0; x < 10; x++) {
-    const code = WORLD[y][x];
-    const tint = code !== 'O' ? flagTint(code) : OCEAN;
+    const land = WORLD[y][x] !== 'O';
     for (let yy = 0; yy < 10; yy++) for (let xx = 0; xx < 10; xx++) {
-      colors[(y * 10 + yy) * N + (x * 10 + xx)] = tint;
+      colors[(y * 10 + yy) * N + (x * 10 + xx)] = land ? LAND : OCEAN;
     }
   }
   const { data: claims, error } = await supa

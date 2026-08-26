@@ -475,3 +475,29 @@ No accounts, no passwords: **the claim email is the key**.
   - World-zoom bitmap (`/api/worldmap.png`) uses each flag's average color (muted 62/38 toward cream, from `flags/palette.json`) so the low-res world still reads as a flag mosaic.
 - **Lists:** country list, Top 20, person cards, and My Turf summaries show the round flag image (emoji fallback data still in `GEO` for toasts).
 - Adding a country: drop `flags/CODE.png` + one entry in `flags/palette.json` (regenerate: average the opaque pixels).
+
+---
+
+## 18. Map render model (flags, reveal, blocks)
+
+Zoom levels and what each shows (no country initials anywhere):
+
+| Zoom | View |
+|---|---|
+| World (macro ≥ ~28px) | The world bitmap (ocean / cream / person field-colors) **+ each country box shows its flag** (round flagdownload.com PNGs). Claimed spots render as colored dots **over** the flag so the "world filling with people" story stays visible. |
+| Cell zoom (≥ 20px) | **Flags are gone** — plain cream boxes for empty spots. Claimed spots show the person's image **faint → clear as you zoom in**: 35% opacity < 30px, 60% < 44px, 85% < 60px, 100% + name label ≥ 64px. Until the image loads, initials stand in. |
+| Person image | The uploaded photo if present, otherwise the generated peep artwork. Loaded async + cached per person. |
+
+### Multi-box (block) claims
+- A claim's cells form a horizontal **run** (1 / 5 / 10 adjacent spots) — `computeRun()` finds the longest contiguous run.
+- If the person's image **aspect ratio fits the block** (within 0.7–1.35× the block's aspect), the whole block renders as **ONE continuous image** scaled across all owned boxes (e.g. a wide banner across 5 boxes).
+- If it doesn't fit, the image is **repeated (cover-cropped) in each box**.
+
+## 19. Live stats — visits · online now · hours since launch
+
+- **Total visits:** `POST /api/visit` — one fire-and-forget call per page load; atomic `value = value + 1` on `stats.total_visits`.
+- **Online now:** `POST /api/heartbeat { session }` every 30s (anon session id in localStorage). Online = distinct sessions seen in the last **90s** (`presence` table); stale sessions (>1h) pruned opportunistically. The heartbeat response carries the count, so the UI updates without a summary round-trip.
+- **Hours since launch:** `TURF_LAUNCH_ISO` env (fallback `2026-08-26T00:00:00Z`), returned by `/api/summary`, rendered as "LAUNCHED 47H AGO".
+- Display: intro card stats line (ONLINE NOW · VISITS · LAUNCHED …) + HUD online counter.
+- `GET /api/summary` now returns `{ total, byCountry, top20, totalVisits, onlineNow, launchIso }`.
+- Honest limits (fine at this scale): the visit counter counts page loads (not unique humans) — upgrade path is an hour-deduped `visits(ip, hour)` table; "online" is a 90s-activity window, not a hard session.

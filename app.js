@@ -220,17 +220,60 @@ function getFlag(code){
   return false;
 }
 function preloadFlags(){ Object.keys(macros).forEach(getFlag); }
-async function loadFlagPalette(){
-  try{
-    const r = await fetch('flags/palette.json', { cache: 'force-cache' });
-    if(r.ok){ flagPalette = await r.json(); rebuildLow(); draw(); }
-  }catch(e){}
+/* ---- user image reveal: faint -> clear as you zoom in ---- */
+function revealAlpha(s){
+  if(s < 30) return 0.35;
+  if(s < 44) return 0.6;
+  if(s < 60) return 0.85;
+  return 1;
+}
+function drawCover(ctx2, img, dx, dy, dw, dh){
+  const ia = img.naturalWidth / img.naturalHeight;
+  const ba = dw / dh;
+  let sw, sh, sx, sy;
+  if(ia > ba){ sh = img.naturalHeight; sw = sh * ba; sx = (img.naturalWidth - sw) / 2; sy = 0; }
+  else { sw = img.naturalWidth; sh = sw / ba; sx = 0; sy = (img.naturalHeight - sh) / 2; }
+  ctx2.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+const personArtCache = {};
+function personArtKey(p){
+  return (p.image ? 'u:' + p.image : 'p:' + p.name + '|' + p.color + '|' + p.sh) + '@' + (p._i !== undefined ? p._i : p.id);
+}
+function personArt(p){
+  const k = personArtKey(p);
+  let img = personArtCache[k];
+  if(!img){
+    img = new Image();
+    img.onload = () => { draw(); };
+    img.src = p.image || createPeepArtwork(p.name, p.color, p.sh);
+    personArtCache[k] = img;
+  }
+  return img;
+}
+/* longest contiguous horizontal run of a person's cells (full-block image) */
+function computeRun(cellList){
+  if(!cellList || cellList.length < 2) return null;
+  const rows = {};
+  cellList.forEach(i => { const y = (i / N) | 0, x = i % N; (rows[y] = rows[y] || new Set()).add(x); });
+  let best = null;
+  for(const yStr in rows){
+    const y = +yStr;
+    const xs = [...rows[yStr]].sort((a,b) => a-b);
+    let start = xs[0], prev = xs[0];
+    const flush = () => { const n = prev - start + 1; if(n >= 2 && (!best || n > best.n)) best = {x:start, y:y, n:n}; };
+    for(let k=1;k<xs.length;k++){
+      if(xs[k] === prev+1) prev = xs[k];
+      else { flush(); start = xs[k]; prev = xs[k]; }
+    }
+    flush();
+  }
+  return best;
 }
 function rebuildLow(){
   const lc = low.getContext('2d');
   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
     const c = cells[y*N+x];
-    lc.fillStyle = c.ocean ? OCEAN : (c.person ? c.person.color : flagTint(WORLD[c.mr][c.mc]));
+    lc.fillStyle = c.ocean ? OCEAN : (c.person ? c.person.color : LAND_EMPTY);
     lc.fillRect(x, y, 1, 1);
   }
 }
@@ -260,14 +303,27 @@ function draw(){
       ctx.beginPath(); ctx.moveTo(ox, py); ctx.lineTo(ox+N*s, py); ctx.stroke();
     }
     const mp = 10*s;
-    if(mp >= 46){
-      ctx.fillStyle = INK;
-      ctx.textAlign = 'center';
+    if(mp >= 28){
+      /* zoomed out: each country box shows its flag (no initials) */
       for(let mr=0;mr<10;mr++)for(let mc=0;mc<10;mc++){
         const code = WORLD[mr][mc];
         if(code === 'O') continue;
-        ctx.font = `700 ${Math.min(mp*0.2, 20)}px ${FONT}`;
-        ctx.fillText(code, ox + (mc*10+5)*s, oy + (mr*10+5)*s + mp*0.06);
+        const fl = flagCache[code];
+        if(fl && fl.complete && fl.naturalWidth){
+          const fs3 = mp * 0.92;
+          ctx.drawImage(fl, ox + mc*10*s + (mp-fs3)/2, oy + mr*10*s + (mp-fs3)/2, fs3, fs3);
+        }
+        if(s >= 2.5){
+          /* claimed spots stay visible over the flag */
+          for(let yy=0;yy<10;yy++)for(let xx=0;xx<10;xx++){
+            const c2 = cells[(mr*10+yy)*N + (mc*10+xx)];
+            if(c2 && c2.person){
+              ctx.fillStyle = c2.person.color;
+              const d = Math.max(2, s);
+              ctx.fillRect(ox + (mc*10+xx)*s, oy + (mr*10+yy)*s, d, d);
+            }
+          }
+        }
       }
     }
   } else {
@@ -279,14 +335,8 @@ function draw(){
       const c = cells[y*N+x], px = ox+x*s, py = oy+y*s;
       if(c.ocean){ ctx.fillStyle = OCEAN; ctx.fillRect(px,py,s,s); continue; }
       if(!c.person){
-        const code = WORLD[c.mr][c.mc];
-        ctx.fillStyle = flagTint(code);
+        ctx.fillStyle = LAND_EMPTY;
         ctx.fillRect(px,py,s,s);
-        const fl = flagCache[code];
-        if(fl && fl.complete && fl.naturalWidth){
-          const fs2 = s * 0.86;
-          ctx.drawImage(fl, px + (s-fs2)/2, py + (s-fs2)/2, fs2, fs2);
-        }
         continue;
       }
       const p = c.person;
@@ -295,9 +345,36 @@ function draw(){
       if(s >= 24){
         ctx.strokeStyle = INK; ctx.lineWidth = Math.min(2.5, s*0.06);
         ctx.strokeRect(px+1, py+1, s-2, s-2);
-        ctx.fillStyle = INK;
-        ctx.font = `700 ${Math.max(9, s*0.4)}px ${FONT}`;
-        ctx.fillText(p.name.slice(0,2), px+s/2, py+s*0.62);
+        /* user image reveal: faint at mid zoom -> clear at high zoom */
+        const a = revealAlpha(s);
+        const img = personArt(p);
+        const loaded = img && img.complete && img.naturalWidth > 0;
+        const n = p._run ? p._run.n : 1;
+        const inRun = p._run && y === p._run.y && x >= p._run.x && x < p._run.x + p._run.n;
+        const isAnchor = p._run && x === p._run.x && y === p._run.y;
+        const ia = loaded ? (img.naturalWidth / img.naturalHeight) : 0;
+        const blockFit = loaded && n > 1 && ia >= n*0.7 && ia <= n*1.35;
+        if(inRun && isAnchor && blockFit){
+          /* aspect fits the block: ONE image across all owned boxes */
+          ctx.globalAlpha = a;
+          drawCover(ctx, img, px+1, py+1, n*s-2, s-2);
+          ctx.globalAlpha = 1;
+        } else if(inRun && blockFit){
+          /* covered by the anchor's full-block image */
+        } else {
+          /* aspect doesn't fit (or single box): repeat the image in each box */
+          if(loaded){
+            ctx.globalAlpha = a;
+            drawCover(ctx, img, px+1, py+1, s-2, s-2);
+            ctx.globalAlpha = 1;
+          } else {
+            ctx.globalAlpha = a;
+            ctx.fillStyle = INK;
+            ctx.font = `700 ${Math.max(9, s*0.4)}px ${FONT}`;
+            ctx.fillText(p.name.slice(0,2), px+s/2, py+s*0.62);
+            ctx.globalAlpha = 1;
+          }
+        }
         if(s >= 64){
           ctx.font = `700 ${Math.min(13, s*0.14)}px ${FONT}`;
           const nm = p.name.length > 12 ? p.name.slice(0,11)+'…' : p.name;
@@ -759,6 +836,10 @@ async function fetchSummary(){
     liveTotal = sm.total || 0;
     liveCountryCounts = sm.byCountry || null;
     liveTop20 = sm.top20 || [];
+    if(sm.totalVisits) liveVisits = sm.totalVisits;
+    if(typeof sm.onlineNow === 'number') lastOnline = sm.onlineNow;
+    if(sm.launchIso) launchIso = sm.launchIso;
+    refreshLiveStats();
     refreshIntroCount();
     buildCountries();
     buildTop20();
@@ -798,6 +879,7 @@ function placeLiveClaim(cl, animate){
   });
   if(first === null) return;
   p._i = first;
+  p._run = computeRun(cl.cells);
   allPeople.push(p);
   if(animate){
     fly(p._i % N + 0.5, ((p._i / N)|0) + 0.5, cl.spots > 1 ? 5 : 8, () => openPerson(p));
@@ -928,6 +1010,7 @@ function placeLocalPerson(d, note){
     if(c && !c.ocean){ c.person = person; macros[d.country].claimed++; macros[d.country].people.push(person); }
   });
   person._i = positions[0].y*N + positions[0].x;
+  person._run = d.spots > 1 ? computeRun(positions.map(q => q.y*N + q.x)) : null;
   allPeople.push(person);
   rebuildLow();
   closeDock();
@@ -1008,6 +1091,7 @@ async function loadRealClaims(){
       });
       if(first !== null){
         p._i = first;
+        p._run = computeRun(cl.cells);
         allPeople.push(p);
         macros[cl.country].claimed += cl.spots;
         macros[cl.country].people.push(p);
@@ -1094,6 +1178,57 @@ function refreshIntroCount(){
   const total = (MODE === 'live' && liveTotal) ? liveTotal : allPeople.length;
   document.getElementById('introCount').textContent = total.toLocaleString('en-US') + ' ON THE TURF — AND COUNTING';
   buildCountries();
+}
+
+/* ==========================================================================
+   LIVE STATS — hours since launch · total visits · online now
+   ========================================================================== */
+const LAUNCH_ISO_FALLBACK = '2026-08-26T00:00:00Z';
+let launchIso = LAUNCH_ISO_FALLBACK;
+let liveVisits = 0;
+let lastOnline = null;
+let turfSession = null;
+try{
+  turfSession = localStorage.getItem('turf_session') || null;
+  if(!turfSession){
+    turfSession = 's' + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+    localStorage.setItem('turf_session', turfSession);
+  }
+}catch(e){ turfSession = 's' + Math.random().toString(36).slice(2,10); }
+
+function fmtSinceLaunch(){
+  const t = Date.now() - new Date(launchIso).getTime();
+  if(!Number.isFinite(t) || t < 0) return null;
+  const h = Math.floor(t / 3600000);
+  const d = Math.floor(h / 24);
+  return d > 0 ? d + 'D ' + (h % 24) + 'H' : h + 'H';
+}
+
+function refreshLiveStats(){
+  const el = document.getElementById('introStats');
+  const parts = [];
+  if(lastOnline !== null && lastOnline !== undefined) parts.push(lastOnline + ' ONLINE NOW');
+  if(liveVisits) parts.push(liveVisits.toLocaleString('en-US') + ' VISITS');
+  const since = fmtSinceLaunch();
+  if(since) parts.push('LAUNCHED ' + since + ' AGO');
+  if(el) el.textContent = parts.join(' \u00B7 ');
+  const ho = document.getElementById('hudOnline');
+  if(ho) ho.textContent = (lastOnline !== null && lastOnline !== undefined) ? ' \u00B7 ' + lastOnline + ' ONLINE' : '';
+}
+
+function trackVisit(){
+  if(typeof fetch !== 'function') return;
+  try{ fetch('api/visit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(()=>{}); }catch(e){}
+}
+
+function heartbeat(){
+  if(typeof fetch !== 'function') return;
+  try{
+    fetch('api/heartbeat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: turfSession }) })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if(d && typeof d.online === 'number'){ lastOnline = d.online; refreshLiveStats(); } })
+      .catch(()=>{});
+  }catch(e){}
 }
 
 /* ==========================================================================
@@ -1226,7 +1361,10 @@ refreshIntroCount();
 resize();
 updateClaimUI();
 preloadFlags();
-loadFlagPalette();
+trackVisit();
+heartbeat();
+setInterval(heartbeat, 30000);
+refreshLiveStats();
 probeLive();
 initBachs();
 document.getElementById('mtFindBtn').onclick = mtFind;

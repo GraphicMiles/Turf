@@ -94,3 +94,23 @@ create materialized view if not exists mv_top20 as
   from public.claims
   where status in ('paid', 'free') and position <= 20
   order by position;
+
+-- ============================================================================
+-- STATS — page visits + live presence (online now)
+-- ============================================================================
+create table if not exists public.stats (
+  key         text primary key,
+  value       bigint not null default 0,
+  updated_at  timestamptz not null default now()
+);
+insert into public.stats (key, value) values ('total_visits', 0) on conflict (key) do nothing;
+
+create table if not exists public.presence (
+  session    text primary key,
+  last_seen  timestamptz not null default now()
+);
+create index if not exists presence_last_seen_idx on public.presence (last_seen);
+
+alter table public.stats    enable row level security;
+alter table public.presence enable row level security;
+-- (no policies: all access goes through the service role inside our functions)

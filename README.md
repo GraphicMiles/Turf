@@ -11,8 +11,9 @@ A living map of people on Earth — not roads, cities, or businesses. A map of h
 
 - **The map is the product** — full-viewport, pannable, zoomable world (10×10 macro regions × 10×10 person slots = 10,000 spots). Deterministic world, same everywhere.
 - **Photos** — claimants can attach a photo (compressed to ≤512px WebP client-side, stored in Supabase Storage via signed upload URLs; the card renders it).
-- **Country flags** — every empty land tile wears its country's flag (flagdownload.com round PNGs in `flags/`); claimed spots replace their flag with the person. World zoom shows each country as its muted national tint.
+- **Country flags** — zoomed out, every country box shows its flag (flagdownload.com round PNGs in `flags/`, no initials). Zoomed in, flags are gone: plain boxes for empty spots, and claimed spots show the person's image **faint → clear as you zoom in** (photo, or generated peep art). Multi-box claims with a fitting image render as **one continuous image across the block**; otherwise the image repeats per box.
 - **My Turf** — no accounts: your claim email is the key. Enter it (🔑 My Turf) to find your spot and edit your profile (name, bio, field, city, project, links, photo). The spot itself (cells/position/country) is immutable; moving up the ranking is the phase-2 upgrade.
+- **Live stats** — hours since launch, total page visits, and online-now count (30s heartbeats, 90s window) in the intro card + HUD.
 - **Scales by design** — page load is one tiny world bitmap (PNG) + one summary JSON; person detail is lazy-loaded per visible 10×10 sector (≤ ~100 rows); cell allocation is O(macro). See `docs/bachs-integration.md` §15.
 - **Founder tier** — the first **200 claims are FREE** with a **visual countdown 200 → 0** in the claim dock. At 0, payment (Bachs) activates.
 - **Position ranking** — every claim gets a global `POSITION #`, **oldest member = #1**.
@@ -52,6 +53,8 @@ A living map of people on Earth — not roads, cities, or businesses. A map of h
   - `GET /api/worldmap.png` — server-rendered world bitmap (few KB, 30 s cache)
   - `POST /api/upload-url` — mint a signed photo-upload URL (Supabase Storage; `owner` = the claim's email when editing)
   - `GET/POST /api/my-claim` — find & edit your spot by claim email (My Turf)
+  - `POST /api/visit` · `POST /api/heartbeat` — live stats (visits counter, online-now presence)
+  - `GET /api/summary` — totals, per-country counts, top 20, visits, online, launch time
   - `POST /api/webhooks/bachs` — signature-verified fulfilment (also assigns position)
 - **Supabase** — Postgres `claims` (position, status, ip, macro, image_url, identity unique index) + `webhook_events` (dedupe) + public Storage bucket `people` for photos. Run `supabase/schema.sql`.
 - `world-core.js` is shared by the browser **and** the server so cell allocation is identical everywhere.
