@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>TURF F. — Everyone has a piece on Earth</title>
+  <meta name="description" content="A living map of people on Earth. Claim your turf for ₦100. Explore the human internet." />
+
+  <!-- Font Awesome & Google Fonts (same as the original design) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ================= TOP BAR ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"><i class="fa-solid fa-square"></i></span>
+      <span class="brand-name">TURF</span>
+      <span class="brand-tag">F.</span>
+    </div>
+    <nav class="topbar-actions">
+      <span class="pm-btn" id="pmExplore" title="Take me somewhere">
+        <i class="fa-solid fa-dice"></i><span class="lbl">Explore</span>
+      </span>
+      <span class="pm-btn" id="pmCountries" title="People by country">
+        <i class="fa-solid fa-flag"></i><span class="lbl">People by Country</span>
+      </span>
+      <span class="pm-btn primary" id="pmClaim" title="Claim your turf">
+        <i class="fa-solid fa-user-plus"></i><span class="lbl">Claim your turf · ₦100</span>
+      </span>
+    </nav>
+  </header>
+
+  <!-- ================= MAP ================= -->
+  <main id="mapWrap">
+    <canvas id="mapCanvas"></canvas>
+
+    <!-- intro / homepage copy (compact, dismissible) -->
+    <div class="intro" id="intro">
+      <button class="intro-close" id="introClose" aria-label="Dismiss"><i class="fa-solid fa-xmark"></i></button>
+      <h1 class="intro-title">TURF F.</h1>
+      <p class="intro-sub">Everyone has a piece on Earth.<br>Claim yours for ₦100.</p>
+      <p class="intro-f mono">F. — AS IN FUN (ALSO FLEX, FAM, FOR REAL — YOU DECIDE)</p>
+      <div class="intro-actions">
+        <span class="pm-btn primary small" id="introClaim"><p>Claim your turf</p><i class="fa-solid fa-arrow-right"></i></span>
+        <span class="pm-btn small" id="introExplore"><p>Explore the map</p><i class="fa-solid fa-location-arrow"></i></span>
+      </div>
+      <p class="intro-count mono" id="introCount">… people mapped</p>
+    </div>
+
+    <!-- HUD -->
+    <div class="hud mono" id="hud"><span id="hudView">WORLD</span> · <span id="hudCount">…</span> ON TURF · <span id="hudZoom">1.0×</span></div>
+
+    <!-- zoom / navigation controls -->
+    <div class="map-ctl">
+      <button id="pmIn" title="Zoom in"><i class="fa-solid fa-plus"></i></button>
+      <button id="pmOut" title="Zoom out"><i class="fa-solid fa-minus"></i></button>
+      <button id="pmDice" title="Take me somewhere"><i class="fa-solid fa-dice"></i></button>
+      <button id="pmHome" title="Full world"><i class="fa-solid fa-house"></i></button>
+    </div>
+
+    <!-- hover chip -->
+    <div class="hover-chip mono" id="hoverChip"></div>
+  </main>
+
+  <!-- ================= DOCK (person card / claim form / countries) ================= -->
+  <aside class="dock" id="dock">
+    <div class="dock-handle" aria-hidden="true"></div>
+    <button class="dock-close" id="dockClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+
+    <!-- VIEW: PERSON -->
+    <section class="dock-view" id="viewPerson" hidden>
+      <div class="pm-art"><img id="pmAvatar" alt="Profile artwork" /><span class="pm-badge" id="pmBadge"></span></div>
+      <h2 class="pm-name" id="pmName">—</h2>
+      <p class="pm-field" id="pmField">—</p>
+      <p class="pm-loc"><i class="fa-solid fa-location-dot"></i> <span id="pmLoc">—</span></p>
+      <p class="pm-bio" id="pmBio">—</p>
+      <div class="pm-featured">
+        <span class="pm-featured-label mono">FEATURED CREATION</span>
+        <img id="pmProjectArt" alt="Featured creation" />
+        <p class="pm-project" id="pmProject">—</p>
+      </div>
+      <div class="pm-actions">
+        <span class="cta small" id="pmVisit"><p>Visit profile</p><i class="fa-solid fa-arrow-up-right-from-square"></i></span>
+        <span class="cta small outline" id="pmView"><p>View project</p><i class="fa-solid fa-arrow-right"></i></span>
+      </div>
+      <p class="pm-meta mono" id="pmMeta">TURF F. #—</p>
+    </section>
+
+    <!-- VIEW: CLAIM -->
+    <section class="dock-view" id="viewClaim" hidden>
+      <h2 class="dock-title">Claim your turf</h2>
+      <p class="dock-sub">A piece of Earth. Forever. <b>₦100</b>.</p>
+      <form id="claimForm" novalidate>
+        <div class="claim-preview-wrap">
+          <img class="claim-preview" id="claimPreview" alt="Your preview" />
+          <span class="claim-preview-tag mono" id="claimPreviewTag">YOUR PREVIEW</span>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="cfName">NAME *</label>
+          <input class="form-input" id="cfName" type="text" maxlength="24" placeholder="e.g. Raji" autocomplete="off" />
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="cfBio">SHORT BIO</label>
+          <input class="form-input" id="cfBio" type="text" maxlength="80" placeholder="One line about what you do" autocomplete="off" />
+        </div>
+
+        <div class="form-row split">
+          <div>
+            <label class="form-label" for="cfField">FIELD</label>
+            <select class="form-input" id="cfField"></select>
+          </div>
+          <div>
+            <label class="form-label" for="cfCountry">COUNTRY</label>
+            <select class="form-input" id="cfCountry"></select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="cfCity">CITY</label>
+          <input class="form-input" id="cfCity" type="text" maxlength="24" placeholder="Lagos" autocomplete="off" />
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="cfProject">ONE PROJECT / CREATION</label>
+          <input class="form-input" id="cfProject" type="text" maxlength="48" placeholder="The one thing you want the world to find" autocomplete="off" />
+        </div>
+
+        <div class="form-row split">
+          <div>
+            <label class="form-label" for="cfWeb">WEBSITE</label>
+            <input class="form-input" id="cfWeb" type="text" maxlength="60" placeholder="yourname.com" autocomplete="off" />
+          </div>
+          <div>
+            <label class="form-label" for="cfSocial">SOCIAL LINKS</label>
+            <input class="form-input" id="cfSocial" type="text" maxlength="60" placeholder="@handle" autocomplete="off" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <span class="form-label">HOW MANY SPOTS?</span>
+          <div class="spot-chips" id="spotChips">
+            <label class="spot-chip active"><input type="radio" name="spots" value="1" checked /><span>1 spot · ₦100</span></label>
+            <label class="spot-chip"><input type="radio" name="spots" value="5" /><span>5 spots · ₦500</span></label>
+            <label class="spot-chip"><input type="radio" name="spots" value="10" /><span>10 spots · ₦1,000</span></label>
+          </div>
+          <p class="field-note mono">MAX 10 SPOTS PER PERSON · ADJACENT CELLS WHERE POSSIBLE</p>
+        </div>
+
+        <p class="privacy-note"><i class="fa-solid fa-circle-info"></i> Your spot is placed at city/region level with randomized position — we never reveal precise coordinates.</p>
+
+        <span class="cta full" id="cfSubmit"><p>Place me on the turf →</p><i class="fa-solid fa-bolt"></i></span>
+      </form>
+    </section>
+
+    <!-- VIEW: COUNTRIES -->
+    <section class="dock-view" id="viewCountries" hidden>
+      <h2 class="dock-title">People by country</h2>
+      <p class="dock-sub">Not a ranking of people — just how many have claimed a place here.</p>
+      <div class="country-list" id="countryList"></div>
+      <p class="country-foot mono">TAP A COUNTRY TO FLY THERE</p>
+    </section>
+  </aside>
+
+  <!-- ================= TOASTS ================= -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
