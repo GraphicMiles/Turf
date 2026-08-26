@@ -391,8 +391,8 @@ grant all on all tables    in schema public to service_role;
 grant all on all sequences in schema public to service_role;
 
 -- future tables created as postgres in public → service_role keeps access,
--- anon/authenticated never do
-alter default privileges in schema public
-  grant all on tables, sequences to service_role;
-alter default privileges in schema public
-  revoke all on tables, sequences from anon, authenticated;
+-- anon/authenticated never do (one category per statement — PG syntax)
+alter default privileges in schema public grant all on tables to service_role;
+alter default privileges in schema public grant all on sequences to service_role;
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
