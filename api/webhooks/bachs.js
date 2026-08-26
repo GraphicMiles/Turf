@@ -85,6 +85,18 @@ exports.default = async (req, res) => {
           settled = !!(matched && matched.length);
         }
 
+        /* ladder: settle the spot purchase (join/overtake) atomically */
+        if (typeof supa.rpc === 'function') {
+          try {
+            const { data: lad, error: ladErr } = await supa.rpc('settle_ladder', { p_checkout_id: cid });
+            if (ladErr && !/function .* does not exist/i.test(ladErr.message)) throw ladErr;
+            if (lad && lad.error && lad.error !== 'no_ledger') {
+              /* payment can't be honoured (e.g. overtaken target gone) — flag for refund */
+              await supa.from('ladder_ledger').update({ status: 'needs_refund' }).eq('checkout_id', cid);
+            }
+          } catch (e) { /* ladder not migrated — map-era checkout */ }
+        }
+
         if (!settled) {
           /* no claim row (yet): queue for replay instead of dropping it */
           await supa.from('pending_fulfilments').insert({
@@ -98,10 +110,16 @@ exports.default = async (req, res) => {
         await supa.from('claims')
           .update({ status: 'failed' })
           .eq('checkout_id', cid).eq('status', 'pending');
+        await supa.from('ladder_ledger')
+          .update({ status: 'expired' })
+          .eq('checkout_id', cid).eq('status', 'locked');
       } else if (event.type === 'checkout.expired') {
         await supa.from('claims')
           .update({ status: 'expired' })
           .eq('checkout_id', cid).eq('status', 'pending');
+        await supa.from('ladder_ledger')
+          .update({ status: 'expired' })
+          .eq('checkout_id', cid).eq('status', 'locked');
       }
     }
   } catch (e) {

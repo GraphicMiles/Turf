@@ -5,7 +5,7 @@ const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
 const ROOT = path.join(__dirname, '..');
 
-let html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+let html = fs.readFileSync(path.join(ROOT, 'map.html'), 'utf8');
 const appjs = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
 html = html.replace('<script src="app.js"></script>', '<script>\n' + appjs + '\n</script>');
 

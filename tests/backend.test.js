@@ -37,6 +37,22 @@ function makeSupa(state) {
       if (c._opts && c._opts.count && c._ipCheck) return { error: null, count: state.authAttempts || 0 };
       return { error: null, data: null };
     }
+    if (table === 'ladder_entries') {
+      if (c._opts && c._opts.count && c._head) return { error: null, count: state.ladderCount || 0 };
+      if (c._ms) return { error: null, data: state.ladderTarget || null };
+      return { error: null, data: state.ladderRows || [] };
+    }
+    if (table === 'ladder_ledger') {
+      if (c._insert) { state.lastLedger = c._insert; return { error: null, data: null }; }
+      if (c._update) return { error: null, data: null };
+      if (c._ms) return { error: null, data: state.lockedLedger || null };
+      return { error: null, data: state.recentLedger || [] };
+    }
+    if (table === 'spot_posts') {
+      if (c._opts && c._opts.count && c._head) return { error: null, count: state.postCount || 0 };
+      if (c._insert) { state.lastPost = c._insert; return { error: null, data: Object.assign({ id: 'post_x' }, c._insert) }; }
+      return { error: null, data: state.posts || [] };
+    }
     if (table === 'claims') {
       if (c._codeCheck && c._ms) return { error: null, data: state.codeClaim || null };
       if (c._lte) return { error: null, data: state.top20 || [] };
@@ -55,7 +71,7 @@ function makeSupa(state) {
   }
   function chain(table) {
     const c = {};
-    c.select = (cols, opts) => { c._opts = opts; if (cols === 'country') c._countryOnly = true; return c; };
+    c.select = (cols, opts) => { c._opts = opts; if (opts && opts.head) c._head = true; if (cols === 'country') c._countryOnly = true; return c; };
     c.in = () => c;
     c.eq = (col) => { if (col === 'ip') c._ipCheck = true; if (col === 'edit_code_hash') c._codeCheck = true; return c; };
     c.gte = () => c;
@@ -88,6 +104,8 @@ function freshState(extra) {
   return Object.assign({
     settledCount: 0, ipCount: 0, rows: [], top20: [], countryRows: [], myClaims: [], codeClaim: null,
     statValue: null, sessions: [], dupEvents: new Set(), updates: [], authAttempts: 0,
+    ladderCount: 0, ladderTarget: null, ladderRows: [], lockedLedger: null, recentLedger: [], lastLedger: null,
+    postCount: 0, posts: [], lastPost: null,
   }, extra || {});
 }
 const fakeRes = () => {
@@ -275,6 +293,63 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   currentSupa = makeSupa(freshState({ existing: true, codeClaim: { id: 'cl_code' } }));
   r = await uploadUrl({ method: 'POST', body: { name: 'Raji', code: 'ABCD-2345', type: 'image/webp', size: 1000 }, headers: {} }, fakeRes());
   T('upload-url: valid edit code verifies owner → 200', r.code === 200);
+
+  /* ---------- ladder: rules + checkout + view ---------- */
+  const L = require(path.join(ROOT, 'lib/ladder.js'));
+  T('ladder: base 100, overtake 2×, validAmount bounds', L.basePrice() === 100 && L.overtakePrice(500) === 1000 && L.validAmount(100) === true && L.validAmount(99) === false && L.validAmount(10000001) === false);
+  T('ladder: previewRank sorts by amount paid', L.previewRank([{ amount: 5000 }, { amount: 1000 }, { amount: 100 }], 2000, Date.now()) === 2 && L.previewRank([{ amount: 5000 }, { amount: 1000 }, { amount: 100 }], 9999, Date.now()) === 1);
+
+  const ladderCheckout = req_('api/ladder-checkout.js');
+  global.fetch = async () => ({ ok: true, json: async () => ({ checkout_id: 'chk_l1', checkout_url: 'https://checkout.bachs.io/c/l1' }) });
+  currentSupa = makeSupa(freshState());
+  r = await ladderCheckout({ method: 'POST', body: { name: 'Big Spender', field: 'Music', country: 'NGA', amount: 2000 }, headers: {} }, fakeRes());
+  T('ladder-checkout: join ₦2000 → 200, ledger locked', r.code === 200 && r.body.amount === 2000 && r.body.action === 'join' && currentSupa.state.lastLedger.amount === 2000 && currentSupa.state.lastLedger.status === 'locked' && !!r.body.edit_code);
+  T('ladder-checkout: edit code hash stored on claim', /^[0-9a-f]{64}$/.test(currentSupa.state.lastInsert.edit_code_hash) && currentSupa.state.lastInsert.status === 'pending');
+  r = await ladderCheckout({ method: 'POST', body: { name: 'Small', country: 'NGA', amount: 50 }, headers: {} }, fakeRes());
+  T('ladder-checkout: below ₦100 → 400', r.code === 400);
+  currentSupa = makeSupa(freshState({ ladderTarget: { claim_id: '11111111-2222-3333-4444-555555555555', amount: 500 } }));
+  r = await ladderCheckout({ method: 'POST', body: { name: 'Challenger', country: 'NGA', target_claim_id: '11111111-2222-3333-4444-555555555555' }, headers: {} }, fakeRes());
+  T('ladder-checkout: overtake → 2× target (₦1000)', r.code === 200 && r.body.amount === 1000 && r.body.action === 'overtake' && currentSupa.state.lastLedger.target_claim_id === '11111111-2222-3333-4444-555555555555');
+  currentSupa = makeSupa(freshState({ ladderTarget: { claim_id: '11111111-2222-3333-4444-555555555555', amount: 500 }, lockedLedger: { id: 'lx' } }));
+  r = await ladderCheckout({ method: 'POST', body: { name: 'Second', country: 'NGA', target_claim_id: '11111111-2222-3333-4444-555555555555' }, headers: {} }, fakeRes());
+  T('ladder-checkout: target locked → 423', r.code === 423);
+  currentSupa = makeSupa(freshState({ existing: true }));
+  r = await ladderCheckout({ method: 'POST', body: { name: 'Dup', country: 'NGA', amount: 100 }, headers: {} }, fakeRes());
+  T('ladder-checkout: duplicate identity → 409', r.code === 409);
+  global.fetch = realFetch;
+
+  const ladderView = req_('api/ladder.js');
+  currentSupa = makeSupa(freshState({ ladderRows: [{ claim_id: 'cl_a', amount: 5000, paid_at: '2026-08-26T00:00:00Z', claims: { name: 'Raji', country: 'NGA' } }] }));
+  r = await ladderView({ method: 'GET', query: {} }, fakeRes());
+  T('ladder view: rows via REST fallback, rank 1 = biggest payer', r.code === 200 && r.body.rows.length === 1 && r.body.rows[0].rank === 1 && r.body.rows[0].holder.name === 'Raji' && r.body.rows[0].amount === 5000);
+  currentSupa = makeSupa(freshState({ ladderCount: 7 }));
+  r = await ladderView({ method: 'GET', query: { meta: '1' } }, fakeRes());
+  T('ladder view: meta (taken, basePrice)', r.code === 200 && r.body.taken === 7 && r.body.basePrice === 100 && r.body.firstSpotFree === false);
+
+  /* ---------- spot posts (media feed) ---------- */
+  const spotPost = req_('api/spot-post.js');
+  currentSupa = makeSupa(freshState({ codeClaim: { id: '11111111-2222-3333-4444-555555555555', name: 'Raji', status: 'free' }, statObj: { id: 'obj' } }));
+  r = await spotPost({ method: 'POST', body: { code: 'ABCD-2345', kind: 'video', path: '11111111-2222-3333-4444-555555555555.mp4', caption: '<b>hi</b>' } }, fakeRes());
+  T('spot-post: code auth + video stored, caption cleaned', r.code === 200 && currentSupa.state.lastPost.kind === 'video' && !/[<>]/.test(currentSupa.state.lastPost.caption || '') && currentSupa.state.lastPost.claim_id === '11111111-2222-3333-4444-555555555555');
+  r = await spotPost({ method: 'POST', body: { code: 'ABCD-2345', kind: 'image', path: '11111111-2222-3333-4444-555555555555.mp4' } }, fakeRes());
+  T('spot-post: kind/path mismatch → 400', r.code === 400);
+  r = await spotPost({ method: 'GET', query: { claim_id: '11111111-2222-3333-4444-555555555555' } }, fakeRes());
+  T('spot-post: public feed list', r.code === 200 && Array.isArray(r.body.posts));
+
+  /* ---------- media upload routing ---------- */
+  currentSupa = makeSupa(freshState());
+  r = await uploadUrl({ method: 'POST', body: { name: 'Raji', kind: 'video', type: 'video/mp4', size: 20 * 1024 * 1024 }, headers: {} }, fakeRes());
+  T('upload-url: 20MB mp4 → 200 + .mp4 path', r.code === 200 && /\.mp4$/.test(r.body.path));
+  currentSupa = makeSupa(freshState());
+  r = await uploadUrl({ method: 'POST', body: { name: 'Raji', kind: 'video', type: 'video/mp4', size: 30 * 1024 * 1024 }, headers: {} }, fakeRes());
+  T('upload-url: 30MB video → 413', r.code === 413);
+  currentSupa = makeSupa(freshState());
+  r = await uploadUrl({ method: 'POST', body: { name: 'Raji', kind: 'gif', type: 'image/gif', size: 7 * 1024 * 1024 }, headers: {} }, fakeRes());
+  T('upload-url: gif → 200 + .gif path', r.code === 200 && /\.gif$/.test(r.body.path));
+  currentSupa = makeSupa(freshState());
+  r = await uploadUrl({ method: 'POST', body: { name: 'Raji', kind: 'video', type: 'text/html', size: 1000 }, headers: {} }, fakeRes());
+  T('upload-url: html disguised as video → 415', r.code === 415);
+
 
   /* ---------- live stats: visit + heartbeat + summary ---------- */
   const visit = req_('api/visit.js');

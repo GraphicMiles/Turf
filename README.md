@@ -1,3 +1,21 @@
+# TURF F. 🪜 — Pay more. Rank higher.
+
+> **#1 belongs to whoever paid the most.** Every spot starts at ₦100; overtaking costs **2×** what the holder paid. Each spot is a self-contained feed — photos, GIFs, video, audio.
+
+## The Ladder (v2 — live)
+
+- **Rank = amount paid (desc).** No fixed slots, no favoritism: pay more, rank higher — displaced holders simply re-sort to wherever their payment belongs. Ties: earlier payment ranks higher.
+- **First payer ever defaults to #1** at ₦100 — and holds it only until someone outspends them.
+- **Join:** pay any amount ≥ ₦100 (pick a price, see your projected rank before paying).
+- **Overtake:** pay 2× a holder's payment → you land directly above them. While payment is in flight the target is **locked for 15 minutes** (one overtaker at a time).
+- **Spot feeds:** holders post image / gif / video (≤90s, ≤25MB) / audio (≤3min, ≤10MB) with captions; visitors watch inside the spot's own scrollable container. Auth = the edit code issued once at claim time.
+- **Payments:** Bachs checkout → HMAC-verified webhook → atomic settlement (`settle_ladder`: ledger row → ladder entry, `needs_refund` if it can no longer be honoured).
+- The original 10,000-cell world map is archived at **`/map.html`** (kept for reference).
+
+**Migration required:** run the updated `supabase/schema.sql` (adds `ladder_entries`, `ladder_ledger`, `spot_posts`, `ladder_view()` / `settle_ladder()` / `expire_ladder_locks()`).
+
+---
+
 # TURF F. 🌍
 
 > **Everyone has a piece on Earth. Claim yours — free while the countdown lasts.**

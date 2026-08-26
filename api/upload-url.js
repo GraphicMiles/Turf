@@ -1,21 +1,26 @@
-/* POST /api/upload-url — mint a short-lived signed upload URL for a claim photo.
-   Body: { name*, email?, owner?, type (image/*), size (bytes ≤ 1MB) }
-   The browser then PUTs the (client-compressed WebP) directly to Supabase
-   Storage — the service key never leaves the server.
-   Returns: { uploadUrl, path, method: 'PUT' } — pass `path` back in the claim.
-
-   Security (SECURITY_AUDIT.md H1/H3/H4):
-   • `owner` (the claimant's email) no longer BLINDLY skips the identity check —
-     it must match an existing claim, otherwise it is ignored.
-   • Minting is rate-limited per IP per day (storage-fill / bill DoS).
-   • Cross-site browser posts are rejected. */
+/* POST /api/upload-url — mint a short-lived signed upload URL for spot media.
+   Body: { kind: 'image'|'gif'|'video'|'audio', name*, email?, owner?|code?,
+           type (mime), size (bytes) }
+   Caps (SECURITY_AUDIT.md H1 + media pivot):
+     image ≤ 5MB (webp/jpeg/png) · gif ≤ 8MB · video ≤ 25MB (mp4/webm)
+     audio ≤ 10MB (mp3/m4a/wav/ogg)
+   The browser PUTs directly to Supabase Storage — the service key never
+   leaves the server. Extension is derived server-side from the kind/mime so
+   a .webp path can never hold HTML/video, and content-type spoofing on the
+   trusted bucket domain stays bounded. */
 const crypto = require('crypto');
 const getSupabase = require('../lib/supabase.js');
 const { cleanText, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
 const { hashEditCode, looksLikeEditCode } = require('../lib/editcode.js');
 
-const MAX_BYTES = 1024 * 1024; /* client compresses to ≤512px WebP (~100–300KB) */
 const MINTS_PER_IP_PER_DAY = 12;
+
+const KINDS = {
+  image: { max: 5 * 1024 * 1024,  mimes: /^image\/(webp|jpeg|jpg|png)$/,       exts: { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png' } },
+  gif:   { max: 8 * 1024 * 1024,  mimes: /^image\/gif$/,                        exts: { 'image/gif': 'gif' } },
+  video: { max: 25 * 1024 * 1024, mimes: /^video\/(mp4|webm|quicktime)$/,       exts: { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' } },
+  audio: { max: 10 * 1024 * 1024, mimes: /^audio\/(mpeg|mp4|wav|ogg|x-m4a|aac)$/, exts: { 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav', 'audio/ogg': 'ogg', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac' } },
+};
 
 function todayUtcStart(){
   return new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString();
@@ -27,12 +32,19 @@ exports.default = async (req, res) => {
 
   const body = req.body || {};
   const name = cleanText(body.name, 24);
-  const type = String(body.type || '');
+  const type = String(body.type || '').toLowerCase();
   const size = Number(body.size || 0);
+  let kind = String(body.kind || (type === 'image/gif' ? 'gif' : (type.startsWith('video/') ? 'video' : (type.startsWith('audio/') ? 'audio' : 'image'))));
 
   if (!name) return res.status(400).json({ error: 'name is required' });
-  if (!/^image\//.test(type)) return res.status(415).json({ error: 'Only image uploads are allowed.' });
-  if (size <= 0 || size > MAX_BYTES) return res.status(413).json({ error: 'Photo too large — max 1MB after compression.' });
+  if (!KINDS[kind]) return res.status(400).json({ error: 'kind must be image, gif, video or audio' });
+  const spec = KINDS[kind];
+  if (!spec.mimes.test(type)) return res.status(415).json({ error: 'That file type is not allowed for ' + kind + '.' });
+  if (size <= 0 || size > spec.max) {
+    return res.status(413).json({ error: 'File too large — max ' + Math.round(spec.max / (1024 * 1024)) + 'MB for ' + kind + '.' });
+  }
+  const ext = spec.exts[type];
+  if (!ext) return res.status(415).json({ error: 'Unsupported ' + kind + ' format.' });
 
   let supa;
   try { supa = getSupabase(); } catch (e) {
@@ -44,9 +56,9 @@ exports.default = async (req, res) => {
   const owner = cleanText(body.owner, 120).toLowerCase();
   const code = String(body.code || '').trim();
 
-  /* identity rule: don't mint uploads for data that's taken —
-     UNLESS the requester proves ownership: a valid edit code, or an owner
-     email that matches an existing claim. Anything else is ignored. */
+  /* identity rule: don't mint uploads for data that's taken — UNLESS the
+     requester proves ownership (valid edit code, or owner email matching an
+     existing claim). Everything else is ignored. */
   const { data: existing } = await supa
     .from('claims')
     .select('id')
@@ -86,13 +98,13 @@ exports.default = async (req, res) => {
     .eq('ip', ip)
     .gte('created_at', todayUtcStart());
   if ((mintCount || 0) >= MINTS_PER_IP_PER_DAY) {
-    return res.status(429).json({ error: 'Too many photo uploads today — try again tomorrow.' });
+    return res.status(429).json({ error: 'Too many uploads today — try again tomorrow.' });
   }
-  try { await supa.from('upload_mints').insert({ ip }); } catch (e) { /* soft-fail: mint cap is best-effort */ }
+  try { await supa.from('upload_mints').insert({ ip }); } catch (e) { /* best-effort */ }
 
-  const path = crypto.randomUUID() + '.webp';
+  const path = crypto.randomUUID() + '.' + ext;
   const { data, error } = await supa.storage.from('people').createSignedUploadUrl(path);
   if (error || !data) return res.status(500).json({ error: (error && error.message) || 'could not mint upload URL' });
 
-  return res.status(200).json({ uploadUrl: data.signedUrl, path, method: 'PUT', contentType: 'image/webp' });
+  return res.status(200).json({ uploadUrl: data.signedUrl, path, kind, ext, method: 'PUT', contentType: type });
 };

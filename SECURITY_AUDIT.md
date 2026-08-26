@@ -111,3 +111,14 @@ No `Access-Control-Allow-Origin` headers anywhere (good), but browsers still **e
 3. Enable Vercel WAF/attack-challenge or front with Cloudflare; add rate limits on `/api/*`.
 4. Rotate the GitHub PAT that was shared in chat (it is burned) — and never paste service-role keys anywhere.
 5. Run `npm install && npm test` (suite updated for the new security behaviors).
+
+---
+
+## Addendum — Ladder pivot + media feeds (2026-08-26, same day)
+
+New surface reviewed with the same rules as above:
+
+- **Rank = amount paid** (`ladder_entries`, rank computed by `amount desc, paid_at asc`). Placement is race-free by construction; overtakes settle through the atomic `settle_ladder()` RPC (advisory lock) — a payment that can no longer be honoured is flagged `needs_refund`, never silently dropped.
+- **Amount is fixed server-side** into `ladder_ledger` at checkout; the webhook settles only against the locked amount. The 15-minute overtake lock is advisory UX (423 while locked).
+- **Media feeds (spot_posts):** server-side kind/extension/size caps (image ≤5MB, gif ≤8MB, video ≤25MB, audio ≤10MB), extension derived server-side so a `.webp` path can never carry HTML; posting/deleting requires the edit code (or email + registered name); 12 uploads/IP/day; CSP gains `media-src https://*.supabase.co`.
+- **Known gaps to close before launch:** video/audio **duration** is only enforced client-side (server-side needs ffprobe or a transcoding step); media **moderation/reporting** is still outstanding (M2); needs_refund queue needs an ops runbook.

@@ -244,3 +244,130 @@ create table if not exists public.auth_attempts (
 );
 create index if not exists auth_attempts_ip_day_idx on public.auth_attempts (ip, created_at);
 alter table public.auth_attempts enable row level security;
+
+-- ============================================================================
+-- THE LADDER (2026-08-26 pivot) — rank = amount paid.
+-- • ladder_entries: one row per paid spot. Rank is COMPUTED:
+--     row_number() over (order by amount desc, paid_at asc)
+--   No fixed slots: paying more always ranks you above lower payers; the
+--   displaced simply re-sort. Impartial by construction, race-free placement.
+-- • ladder_ledger: payment intent (lock) + audit trail. 'locked' while the
+--   Bachs checkout is open (15 min), 'settled' by the webhook, 'needs_refund'
+--   when the payment can no longer be honoured.
+-- • spot_posts: media feed per spot (image / gif / video / audio + caption).
+-- ============================================================================
+
+create table if not exists public.ladder_entries (
+  id         bigint generated always as identity primary key,
+  claim_id   uuid not null unique references public.claims(id) on delete cascade,
+  amount     bigint not null check (amount >= 100),
+  paid_at    timestamptz not null default now()
+);
+create index if not exists ladder_sorted_idx on public.ladder_entries (amount desc, paid_at asc);
+alter table public.ladder_entries enable row level security;
+
+create table if not exists public.ladder_ledger (
+  id                 bigint generated always as identity primary key,
+  checkout_id        text unique,
+  action             text not null check (action in ('join','overtake')),
+  amount             bigint not null,
+  target_claim_id    uuid references public.claims(id) on delete set null,
+  target_prev_amount bigint,
+  claim_id           uuid not null references public.claims(id) on delete cascade,
+  status             text not null default 'locked'
+                     check (status in ('locked','settled','expired','needs_refund')),
+  locked_until       timestamptz not null default now() + interval '15 minutes',
+  created_at         timestamptz not null default now()
+);
+create index if not exists ladder_ledger_target_idx on public.ladder_ledger (target_claim_id, status, locked_until);
+create index if not exists ladder_ledger_recent_idx on public.ladder_ledger (status, created_at desc);
+alter table public.ladder_ledger enable row level security;
+
+create table if not exists public.spot_posts (
+  id         uuid primary key default gen_random_uuid(),
+  claim_id   uuid not null references public.claims(id) on delete cascade,
+  kind       text not null check (kind in ('image','gif','video','audio')),
+  url        text not null,
+  caption    text,
+  created_at timestamptz not null default now()
+);
+create index if not exists spot_posts_claim_idx on public.spot_posts (claim_id, created_at desc);
+alter table public.spot_posts enable row level security;
+
+-- Ranked view of the ladder with holder profile (for /api/ladder and the
+-- frontend). Ranks are stable and computed, never stored.
+create or replace function public.ladder_view(p_from integer default 1, p_count integer default 40)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with ranked as (
+    select e.*, row_number() over (order by e.amount desc, e.paid_at asc) as rank
+    from public.ladder_entries e
+  )
+  select coalesce(jsonb_agg(row_to_json(t)), '[]'::jsonb)
+  from (
+    select r.rank, r.amount, r.paid_at,
+           c.id as claim_id, c.name, c.field, c.country, c.city, c.project,
+           c.web, c.social, c.image_url, c.bio,
+           (select count(*) from public.spot_posts p where p.claim_id = r.claim_id) as posts
+    from ranked r
+    join public.claims c on c.id = r.claim_id
+    where r.rank >= p_from and r.rank < p_from + p_count
+    order by r.rank
+  ) t;
+$$;
+
+-- Atomic ladder settlement (webhook: collection.succeeded).
+-- join: insert the entry (rank emerges from sorting).
+-- overtake: target must still exist; the 2× price lands the payer above them.
+-- Both idempotent; nothing about a settled entry ever changes.
+create or replace function public.settle_ladder(p_checkout_id text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  l public.ladder_ledger%rowtype;
+begin
+  perform pg_advisory_xact_lock(918273647);
+
+  select * into l from public.ladder_ledger where checkout_id = p_checkout_id for update;
+  if not found then return jsonb_build_object('error', 'no_ledger'); end if;
+  if l.status = 'settled' then return jsonb_build_object('settled', true, 'duplicate', true); end if;
+  if l.status <> 'locked' then return jsonb_build_object('error', 'ledger_' || l.status); end if;
+
+  if l.action = 'overtake' then
+    if not exists (select 1 from public.ladder_entries where claim_id = l.target_claim_id) then
+      update public.ladder_ledger set status = 'needs_refund' where id = l.id;
+      return jsonb_build_object('error', 'target_gone');
+    end if;
+  end if;
+
+  insert into public.ladder_entries (claim_id, amount)
+  values (l.claim_id, l.amount)
+  on conflict (claim_id) do update set amount = excluded.amount, paid_at = now();
+
+  update public.ladder_ledger set status = 'settled' where id = l.id;
+  return jsonb_build_object('settled', true);
+end;
+$$;
+
+-- Release expired locks (called opportunistically by the API).
+create or replace function public.expire_ladder_locks()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.ladder_ledger
+     set status = 'expired'
+   where status = 'locked' and locked_until < now();
+$$;
+
+grant execute on function public.ladder_view(integer, integer) to service_role;
+grant execute on function public.settle_ladder(text) to service_role;
+grant execute on function public.expire_ladder_locks() to service_role;
