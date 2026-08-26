@@ -396,3 +396,31 @@ alter default privileges in schema public grant all on tables to service_role;
 alter default privileges in schema public grant all on sequences to service_role;
 alter default privileges in schema public revoke all on tables from anon, authenticated;
 alter default privileges in schema public revoke all on sequences from anon, authenticated;
+
+-- ============================================================================
+-- FOUNDER TIER ON THE LADDER — the first 200 spots are FREE.
+-- A free claim enters the ladder at the ₦100 rank; climbing (overtaking)
+-- always costs real money via Bachs. Race-safe under the ladder advisory
+-- lock, so "200 free" cannot be overrun by concurrent requests.
+-- ============================================================================
+create or replace function public.ladder_founder_join(p_claim uuid, p_amount bigint, p_limit integer default 200)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  n bigint;
+begin
+  perform pg_advisory_xact_lock(918273647);
+  select count(*) into n from public.ladder_entries;
+  if n >= p_limit then
+    return jsonb_build_object('error', 'founder_full', 'taken', n);
+  end if;
+  insert into public.ladder_entries (claim_id, amount)
+  values (p_claim, p_amount)
+  on conflict (claim_id) do update set amount = excluded.amount, paid_at = now();
+  return jsonb_build_object('settled', true, 'in_line', n + 1);
+end $$;
+
+grant execute on function public.ladder_founder_join(uuid, bigint, integer) to service_role;

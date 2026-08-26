@@ -3,7 +3,7 @@
    RPC when the schema migration is applied; falls back to REST + JS sort.
    Query ?meta=1 → stats + recent activity instead of rows. */
 const getSupabase = require('../lib/supabase.js');
-const { basePrice, ROW_SIZE } = require('../lib/ladder.js');
+const { basePrice, ROW_SIZE, FOUNDER_LIMIT } = require('../lib/ladder.js');
 
 const HOLDER_SAFE = ['claim_id','name','field','country','city','project','web','social','image_url','bio'];
 
@@ -61,11 +61,15 @@ exports.default = async (req, res) => {
         .eq('status', 'locked')
         .gt('locked_until', new Date().toISOString())
         .limit(50);
+      const t = taken || 0;
       return res.status(200).json({
-        taken: taken || 0,
+        taken: t,
         basePrice: basePrice(),
         rowSize: ROW_SIZE,
-        firstSpotFree: (taken || 0) === 0,
+        firstSpotFree: t === 0,
+        mode: t < FOUNDER_LIMIT ? 'free' : 'paid',
+        freeRemaining: Math.max(0, FOUNDER_LIMIT - t),
+        founderLimit: FOUNDER_LIMIT,
         recent: (recent || []).map(r => ({ action: r.action, amount: r.amount, name: (r.claims && r.claims.name) || 'Someone', at: r.created_at })),
         lockedTargets: (locks || []).map(l => l.target_claim_id),
       });

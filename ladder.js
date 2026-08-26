@@ -28,11 +28,12 @@
 
   /* ---------------- state ---------------- */
   let rows = [];            /* [{rank, amount, holder, posts}] */
-  let meta = { taken: 0, basePrice: BASE_PRICE, recent: [], lockedTargets: [] };
+  let meta = { taken: 0, basePrice: BASE_PRICE, mode: 'free', freeRemaining: 200, recent: [], lockedTargets: [] };
   let loadedTo = 0;
   let myAuth = null;        /* {code} or {email, name} */
   let myClaim = null;
   let selected = null;
+  let backendError = null;
 
   /* ---------------- data ---------------- */
   async function loadMeta() {
@@ -43,10 +44,20 @@
     } catch (e) { /* offline */ }
     $('statTaken').textContent = (meta.taken || 0) + ' SPOTS';
     $('statTop').textContent = 'TOP ' + naira(rows.length ? rows[0].amount : 0);
-    const first = !meta.taken;
-    $('heroSub').innerHTML = first
-      ? 'The first person to pay <b>ever</b> takes <b>#1</b> — at just ₦100. Hold it by outspending whoever comes.'
-      : '#1 belongs to whoever paid the most — anyone can take it. Every spot starts at <b>₦100</b>; overtaking costs <b>2×</b> what the holder paid.';
+    const free = meta.mode === 'free';
+    const left = meta.freeRemaining || 0;
+    if (backendError) {
+      $('heroSub').innerHTML = '⚠️ <b>BACKEND NOT CONFIGURED</b> — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in your hosting env and run supabase/schema.sql.';
+    } else if (free && !meta.taken) {
+      $('heroSub').innerHTML = 'The <b>first 200 spots are FREE</b> — the first person ever takes <b>#1</b> right now. When the free tier fills, spots are paid: #1 = whoever paid the most, overtaking costs 2×.';
+      $('btnClaimTop').querySelector('p').textContent = 'Claim FREE — 200 spots left →';
+    } else if (free) {
+      $('heroSub').innerHTML = 'Founder tier: <b>' + left + ' FREE spots left</b> (of ' + (meta.founderLimit || 200) + '). Yours enters at the ₦100 rank — climb anytime by overtaking at 2×.';
+      $('btnClaimTop').querySelector('p').textContent = 'Claim FREE — ' + left + ' left →';
+    } else {
+      $('heroSub').innerHTML = '#1 belongs to whoever paid the most — anyone can take it. Every spot starts at <b>₦100</b>; overtaking costs <b>2×</b> what the holder paid.';
+      $('btnClaimTop').querySelector('p').textContent = 'Claim your spot →';
+    }
     $('recentTicker').innerHTML = (meta.recent || []).slice(0, 4).map(x =>
       esc(x.name) + ' ' + (x.action === 'overtake' ? 'OVERTOOK' : 'CLAIMED') + ' A SPOT FOR ' + esc(naira(x.amount))).join(' · ');
     render(); /* re-render once lock/meta state is known */
@@ -59,6 +70,7 @@
       const data = await r.json();
       rows = append ? rows.concat(data.rows || []) : (data.rows || []);
       loadedTo = from - 1 + (data.rows || []).length;
+      if (data && data.error) backendError = data.error;
       render();
     } catch (e) {
       if (!append) { rows = []; render(); }
@@ -205,12 +217,21 @@
   function openClaim(target) {
     overtakeTarget = target;
     buildClaimForm();
-    $('claimTitle').textContent = target ? 'Take #' + target.rank + ' — pay 2×' : 'Claim your spot';
-    $('claimSub').textContent = target
-      ? 'You pay double what ' + (target.holder && target.holder.name || 'the holder') + ' paid (' + naira(target.amount) + ') → ' + naira(target.amount * OVERTAKE_MULTIPLE) + '. You land directly above them.'
-      : 'Pick your price — your rank follows your payment. Anyone can overtake you later by paying 2× yours.';
-    $('amountRow').style.display = target ? 'none' : '';
-    $('cfSubmitLabel').textContent = target ? 'Pay ' + naira(target.amount * OVERTAKE_MULTIPLE) + ' & take it →' : 'Pay & claim →';
+    const freeMode = !target && meta.mode === 'free' && !backendError;
+    if (target) {
+      $('claimTitle').textContent = 'Take #' + target.rank + ' — pay 2×';
+      $('claimSub').textContent = 'You pay double what ' + (target.holder && target.holder.name || 'the holder') + ' paid (' + naira(target.amount) + ') → ' + naira(target.amount * OVERTAKE_MULTIPLE) + '. You land directly above them.';
+    } else if (freeMode) {
+      $('claimTitle').textContent = 'Claim your FREE founder spot';
+      $('claimSub').textContent = 'Founder tier — ' + (meta.freeRemaining || 0) + ' free spots left. Yours enters at the ₦100 rank; no payment needed. Climb later by overtaking at 2×.';
+    } else {
+      $('claimTitle').textContent = 'Claim your spot';
+      $('claimSub').textContent = 'Pick your price — your rank follows your payment. Anyone can overtake you later by paying 2× yours.';
+    }
+    $('amountRow').style.display = (target || freeMode) ? 'none' : '';
+    $('cfSubmitLabel').textContent = target
+      ? 'Pay ' + naira(target.amount * OVERTAKE_MULTIPLE) + ' & take it →'
+      : (freeMode ? 'Claim FREE →' : 'Pay & claim →');
     refreshPreview();
     $('claimModal').classList.add('open');
   }
@@ -218,7 +239,7 @@
   async function submitClaim() {
     const name = $('cfName').value.trim();
     if (!name) { showToast('Enter your name first ✍️'); return; }
-    const body = {
+    const profile = {
       name,
       field: $('cfField').value,
       country: $('cfCountry').value,
@@ -229,6 +250,29 @@
       social: $('cfSocial').value.trim(),
       email: $('cfEmail').value.trim(),
     };
+    const freeMode = !overtakeTarget && meta.mode === 'free' && !backendError;
+
+    /* ---- FREE founder claim: instant, no Bachs ---- */
+    if (freeMode) {
+      try {
+        const r = await fetch('api/ladder-free-claim', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          if (r.status === 402) { meta.mode = 'paid'; openClaim(null); return; }
+          throw new Error(data.error || 'HTTP ' + r.status);
+        }
+        stashEditCode(data.edit_code, name);
+        $('claimModal').classList.remove('open');
+        showToast('You are ON THE LADDER 🪜 Founder spot secured — save your edit code!');
+        loadLadder(false);
+      } catch (e) { showToast(e.message + ' — could not claim.'); }
+      return;
+    }
+
+    /* ---- paid join / overtake: Bachs checkout ---- */
+    const body = Object.assign({}, profile);
     if (overtakeTarget) body.target_claim_id = overtakeTarget.holder.claim_id;
     else body.amount = Math.max(BASE_PRICE, Math.round(Number($('cfAmount').value) || BASE_PRICE));
 

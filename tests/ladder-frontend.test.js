@@ -19,7 +19,7 @@ const LADDER_ROWS = {
   ],
   basePrice: 100, rowSize: 20,
 };
-const META = { taken: 2, basePrice: 100, rowSize: 20, firstSpotFree: false, recent: [{ action: 'overtake', amount: 20000, name: 'Ada' }], lockedTargets: ['c2'] };
+const META = { taken: 2, basePrice: 100, rowSize: 20, firstSpotFree: false, mode: 'free', freeRemaining: 198, founderLimit: 200, recent: [{ action: 'overtake', amount: 20000, name: 'Ada' }], lockedTargets: ['c2'] };
 const POSTS = { posts: [{ id: 'p1', kind: 'video', url: 'https://dummy.supabase.co/people/x.mp4', caption: 'my launch', created_at: '2026-08-26T00:00:00Z' }] };
 const CLAIM_BY_CODE = { claim: { id: 'c1', name: 'Ada', field: 'Music', country: 'NGA', city: 'Lagos', status: 'paid', cells: [] } };
 
@@ -55,6 +55,7 @@ setTimeout(async () => {
   T('rank 1 = biggest payer (Ada, ₦20,000, gold box)', d.querySelector('.spot-box[data-rank="1"].top1') && d.querySelector('.spot-box[data-rank="1"]').textContent.indexOf('Ada') >= 0 && d.querySelector('.spot-box[data-rank="1"]').textContent.indexOf('20,000') >= 0);
   T('locked target shows a lock icon', d.querySelector('.spot-box[data-rank="2"]').innerHTML.indexOf('fa-lock') >= 0);
   T('stats header shows 2 spots', d.getElementById('statTaken').textContent.indexOf('2 SPOTS') >= 0);
+  T('hero shows founder free countdown', /FREE/i.test(d.getElementById('heroSub').textContent) && /198/.test(d.getElementById('heroSub').textContent));
   T('recent ticker names the last overtaker', d.getElementById('recentTicker').textContent.indexOf('Ada') >= 0);
 
   d.querySelector('.spot-box[data-rank="1"]').click();

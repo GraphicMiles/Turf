@@ -39,6 +39,7 @@ function makeSupa(state) {
     }
     if (table === 'ladder_entries') {
       if (c._opts && c._opts.count && c._head) return { error: null, count: state.ladderCount || 0 };
+      if (c._insert) { state.lastEntry = c._insert; return { error: null, data: Object.assign({ id: 'e1' }, c._insert) }; }
       if (c._ms) return { error: null, data: state.ladderTarget || null };
       return { error: null, data: state.ladderRows || [] };
     }
@@ -325,6 +326,25 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   currentSupa = makeSupa(freshState({ ladderCount: 7 }));
   r = await ladderView({ method: 'GET', query: { meta: '1' } }, fakeRes());
   T('ladder view: meta (taken, basePrice)', r.code === 200 && r.body.taken === 7 && r.body.basePrice === 100 && r.body.firstSpotFree === false);
+  T('ladder view: meta founder mode free + 193 left', r.body.mode === 'free' && r.body.freeRemaining === 193 && r.body.founderLimit === 200);
+  currentSupa = makeSupa(freshState({ ladderCount: 200 }));
+  r = await ladderView({ method: 'GET', query: { meta: '1' } }, fakeRes());
+  T('ladder view: meta flips to paid at 200', r.body.mode === 'paid' && r.body.freeRemaining === 0);
+
+  /* ---------- founder free claim (first 200 free, no Bachs) ---------- */
+  const ladderFree = req_('functions/ladder-free-claim.js');
+  currentSupa = makeSupa(freshState({ ladderCount: 5 }));
+  r = await ladderFree({ method: 'POST', body: { name: 'Founder One', field: 'Music', country: 'NGA' }, headers: {} }, fakeRes());
+  T('ladder-free-claim: 200, claim free, entry ₦100, edit code once', r.code === 200 && r.body.claim && currentSupa.state.lastInsert.status === 'free' && currentSupa.state.lastEntry.amount === 100 && currentSupa.state.lastEntry.claim_id === 'claim_x' && /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/.test(r.body.edit_code));
+  currentSupa = makeSupa(freshState({ ladderCount: 200 }));
+  r = await ladderFree({ method: 'POST', body: { name: 'Late One', country: 'NGA' }, headers: {} }, fakeRes());
+  T('ladder-free-claim: tier full → 402 paid mode', r.code === 402 && r.body.mode === 'paid');
+  currentSupa = makeSupa(freshState({ existing: true }));
+  r = await ladderFree({ method: 'POST', body: { name: 'Dup', country: 'NGA' }, headers: {} }, fakeRes());
+  T('ladder-free-claim: duplicate identity → 409', r.code === 409);
+  currentSupa = makeSupa(freshState({ ipCount: 5 }));
+  r = await ladderFree({ method: 'POST', body: { name: 'Spam', country: 'NGA' }, headers: { 'x-forwarded-for': '1.2.3.4' } }, fakeRes());
+  T('ladder-free-claim: daily limit → 429', r.code === 429);
 
   /* ---------- spot posts (media feed) ---------- */
   const spotPost = req_('functions/spot-post.js');
