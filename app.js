@@ -270,6 +270,12 @@ function draw(){
           const nm = p.name.length > 12 ? p.name.slice(0,11)+'…' : p.name;
           ctx.fillText(nm, px+s/2, py+s+Math.min(13, s*0.16));
         }
+        if(p.position && p.position <= 20){
+          /* Top 20 — highest visibility: gold ring */
+          ctx.strokeStyle = '#ffd32a';
+          ctx.lineWidth = Math.max(2, s*0.09);
+          ctx.strokeRect(px+s*0.13, py+s*0.13, s*0.74, s*0.74);
+        }
       }
     }
     /* macro gridlines stay visible at cell zoom */
@@ -428,6 +434,7 @@ document.getElementById('pmHome').onclick = () => fly(N/2, N/2, 1);
 document.getElementById('pmDice').onclick = explore;
 document.getElementById('pmExplore').onclick = explore;
 document.getElementById('pmCountries').onclick = () => openDock('countries');
+document.getElementById('pmTop20').onclick = () => { buildTop20(); openDock('top20'); };
 document.getElementById('pmClaim').onclick = () => openClaim();
 document.getElementById('introExplore').onclick = explore;
 document.getElementById('introClaim').onclick = () => openClaim();
@@ -438,7 +445,7 @@ document.getElementById('dockClose').onclick = closeDock;
    DOCK — person card / claim form / countries
    ========================================================================== */
 const dock = document.getElementById('dock');
-const views = { person: document.getElementById('viewPerson'), claim: document.getElementById('viewClaim'), countries: document.getElementById('viewCountries') };
+const views = { person: document.getElementById('viewPerson'), claim: document.getElementById('viewClaim'), top20: document.getElementById('viewTop20'), countries: document.getElementById('viewCountries') };
 function openDock(name){
   Object.keys(views).forEach(k => views[k].hidden = (k !== name));
   dock.classList.add('open');
@@ -450,17 +457,19 @@ function openPerson(p, x, y){
   const g = GEO[p.country];
   document.getElementById('pmAvatar').src = createPeepArtwork(p.name, p.color, p.sh);
   const badge = document.getElementById('pmBadge');
-  badge.textContent = p.field.toUpperCase();
-  badge.style.background = p.color;
+  const top20 = p.position && p.position <= 20;
+  badge.textContent = (top20 ? '⭐ TOP 20 · ' : '') + p.field.toUpperCase();
+  badge.style.background = top20 ? 'var(--accent-yellow)' : p.color;
   document.getElementById('pmName').textContent = p.name;
   document.getElementById('pmField').textContent = p.field;
   document.getElementById('pmLoc').textContent = `${g.flag} ${p.city}, ${g.name}`;
   document.getElementById('pmBio').textContent = p.bio;
   document.getElementById('pmProjectArt').src = createPeepArtwork(p.project, p.sh, p.color);
   document.getElementById('pmProject').textContent = p.project;
-  document.getElementById('pmMeta').textContent = p.spots > 1
-    ? `TURF F. #${p.id.toLocaleString('en-US')} · ${p.spots} SPOTS`
-    : `TURF F. #${p.id.toLocaleString('en-US')}`;
+  const posTxt = p.position ? ' · POSITION #' + p.position.toLocaleString('en-US') + (p.position <= 20 ? ' — TOP 20 ⭐' : '') : '';
+  document.getElementById('pmMeta').textContent = (p.real || p.demo)
+    ? 'TURF F. · ' + (p.founder ? 'FOUNDER SPOT ⭐' : (p.demo ? 'DEMO' : 'PAID CLAIM')) + (p.spots > 1 ? ' · ' + p.spots + ' SPOTS' : '') + posTxt
+    : 'TURF F. #' + p.id.toLocaleString('en-US') + (p.spots > 1 ? ' · ' + p.spots + ' SPOTS' : '');
   document.getElementById('pmVisit').onclick = () => showToast('Mock link — opens ' + p.name + '’s profile');
   document.getElementById('pmView').onclick = () => showToast('Mock link — opens “' + p.project + '”');
   openDock('person');
@@ -474,6 +483,8 @@ function openClaim(prefillCountry, mr, mc){
     if(code) sel.value = code;
   }
   syncCityPlaceholder();
+  updateClaimUI();
+  fetchClaimMode();
   openDock('claim');
 }
 function syncCityPlaceholder(){
@@ -529,45 +540,306 @@ function findRun(code, n){
   return null;
 }
 
-function claim(){
-  const name = document.getElementById('cfName').value.trim();
-  if(!name){ showToast('Add your name first ✍️'); return; }
-  const bio = document.getElementById('cfBio').value.trim();
-  const field = FIELDS.find(f => f.name === document.getElementById('cfField').value);
-  const code = document.getElementById('cfCountry').value;
-  const city = document.getElementById('cfCity').value.trim() || GEO[code].cities[0];
-  const project = document.getElementById('cfProject').value.trim();
-  const spots = +document.querySelector('input[name="spots"]:checked').value;
+/* ==========================================================================
+   CLAIM FLOW
+   Founder tier: the first 200 real claims are FREE. Once the count passes
+   200, payment (Bachs) activates. Works three ways:
+     • live free  — backend stores a 'free' claim, no payment
+     • live paid  — Bachs overlay, webhook confirms, poll for UX
+     • demo       — no backend/SDK (static preview) → placed locally
+   ========================================================================== */
+const FOUNDER_LIMIT = 200;
+let founderCount = 0;        // real claims so far (server-synced when live)
+let claimMode = 'free';      // 'free' | 'paid' | 'demo'
+let pendingCheckoutId = null;
+let demoSeq = 490000;
+let demoPosition = 0;      // local rank counter (demo mode); live rows carry `position`
 
-  const person = makePerson(code, name, field, bio || FIELDS.find(f=>f.name===field.name).bios[0], project, city);
-  person.spots = spots;
+function isFreeClaim(){ return claimMode !== 'paid' && founderCount < FOUNDER_LIMIT; }
+function freeRemaining(){ return Math.max(0, FOUNDER_LIMIT - founderCount); }
 
-  let positions = spots > 1 ? findRun(code, spots) : null;
-  if(!positions){
-    positions = [];
-    const empties = [];
-    for(const inst of macros[code].instances)
-      for(let y=0;y<10;y++)for(let x=0;x<10;x++){
-        const d = cells[(inst.mr*10+y)*N + (inst.mc*10+x)];
-        if(!d.ocean && !d.person) empties.push({x: inst.mc*10+x, y: inst.mr*10+y});
-      }
-    for(let k=0;k<spots && empties.length;k++) positions.push(empties.splice(Math.floor(Math.random()*empties.length),1)[0]);
+function makeRealPerson(d){
+  const f = FIELDS.find(x => x.name === d.field) || FIELDS[0];
+  return {
+    name: d.name, field: f.name, color: f.color,
+    bio: d.bio || f.bios[0],
+    project: d.project || 'Their first project',
+    city: d.city || GEO[d.country].cities[0],
+    country: d.country,
+    sh: FIELDS[(FIELDS.indexOf(f) + 5) % FIELDS.length].color,
+    web: d.web || null, social: d.social || null,
+    real: true, demo: false, founder: false, spots: d.spots || 1,
+  };
+}
+
+function updateClaimUI(){
+  const sub = document.getElementById('claimSub');
+  const label = document.getElementById('cfSubmitLabel');
+  const chips = document.querySelectorAll('#spotChips .spot-chip span');
+  const cd = document.getElementById('claimCountdown');
+  const cdNum = document.getElementById('countdownNum');
+  const cdFill = document.getElementById('countdownFill');
+  const cdSub = document.getElementById('countdownSub');
+  const remaining = freeRemaining();
+  if(isFreeClaim()){
+    if(sub) sub.innerHTML = 'A piece of Earth. Forever. <b>FREE</b> — founder tier.';
+    if(label) label.textContent = 'Claim free → founder spot';
+    if(chips.length === 3){
+      chips[0].textContent = '1 spot · FREE';
+      chips[1].textContent = '5 spots · FREE';
+      chips[2].textContent = '10 spots · FREE';
+    }
+    if(cd) cd.classList.remove('paid');
+    if(cdNum) cdNum.textContent = remaining.toLocaleString('en-US');
+    if(cdFill) cdFill.style.transform = 'scaleX(' + (remaining / FOUNDER_LIMIT) + ')';
+    if(cdSub) cdSub.textContent = 'FIRST 200 CLAIMS ARE FREE — WHEN IT HITS 0, PAYMENT ACTIVATES';
+  } else {
+    if(sub) sub.innerHTML = 'A piece of Earth. Forever. <b>₦100</b>.';
+    if(label) label.textContent = 'Place me on the turf →';
+    if(chips.length === 3){
+      chips[0].textContent = '1 spot · ₦100';
+      chips[1].textContent = '5 spots · ₦500';
+      chips[2].textContent = '10 spots · ₦1,000';
+    }
+    if(cd) cd.classList.add('paid');
+    if(cdNum) cdNum.textContent = '0';
+    if(cdFill) cdFill.style.transform = 'scaleX(0)';
+    if(cdSub) cdSub.textContent = 'FOUNDER TIER COMPLETE — ₦100 PER SPOT, PAID THROUGH BACHS';
   }
-  if(!positions.length){ showToast(GEO[code].name + ' is full — try another country.'); return; }
+}
 
+async function fetchClaimMode(){
+  try{
+    const r = await fetch('api/claim-mode', { cache: 'no-store' });
+    if(!r.ok) return;
+    const m = await r.json();
+    if(m && typeof m.count === 'number'){
+      claimMode = m.mode === 'paid' ? 'paid' : (m.mode === 'demo' ? 'demo' : 'free');
+      founderCount = m.count;
+      updateClaimUI();
+    }
+  }catch(e){ /* offline / static preview → local demo counter */ }
+}
+
+function readClaimForm(){
+  return {
+    name: document.getElementById('cfName').value.trim(),
+    bio: document.getElementById('cfBio').value.trim(),
+    field: document.getElementById('cfField').value,
+    country: document.getElementById('cfCountry').value,
+    city: document.getElementById('cfCity').value.trim(),
+    project: document.getElementById('cfProject').value.trim(),
+    web: document.getElementById('cfWeb').value.trim(),
+    social: document.getElementById('cfSocial').value.trim(),
+    spots: +document.querySelector('input[name="spots"]:checked').value,
+  };
+}
+
+function claim(){
+  const d = readClaimForm();
+  if(!d.name){ showToast('Add your name first ✍️'); return; }
+  const netReady = typeof fetch === 'function';
+  const bachsReady = typeof Bachs !== 'undefined' && Bachs && Bachs.Checkout;
+
+  if(isFreeClaim()){
+    if(netReady){ startFreeClaim(d); return; }
+    founderCount++; updateClaimUI();
+    placeLocalPerson(d, 'You’re on the turf, F. ⭐ Founder spot #' + founderCount.toLocaleString('en-US'));
+    return;
+  }
+  /* paid tier */
+  if(netReady && bachsReady){ startLiveClaim(d); return; }
+  founderCount++; updateClaimUI();
+  placeLocalPerson(d, 'Demo mode — ' + (bachsReady ? 'backend unreachable' : 'payments go live on the deployed site') + '. Placed you locally.');
+}
+
+/* live free founder claim → stored in Supabase with status 'free' */
+async function startFreeClaim(d){
+  try{
+    const res = await fetch('api/free-claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(d),
+    });
+    const row = await res.json().catch(() => ({}));
+    if(!res.ok || !row.cells){
+      const err = new Error(row.error || 'HTTP ' + res.status);
+      err.status = res.status;
+      throw err;
+    }
+    founderCount++;
+    updateClaimUI();
+    applyRealClaim(row, 'free');
+  }catch(e){
+    if(e.status === 409 || e.status === 429){ showToast(e.message); return; } /* already claimed / daily limit — do NOT place */
+    console.warn('Free claim unavailable → demo mode:', e.message || e);
+    founderCount++; updateClaimUI();
+    placeLocalPerson(d, 'Demo mode — ' + (e.message || 'backend unreachable') + '. Placed you locally.');
+  }
+}
+
+/* live paid claim → Bachs session on the server, overlay in the browser,
+   webhook confirms, we poll for UX */
+async function startLiveClaim(d){
+  try{
+    const res = await fetch('api/create-checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(d),
+    });
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok || !data.checkout_url){
+      const err = new Error(data.error || 'HTTP ' + res.status);
+      err.status = res.status;
+      throw err;
+    }
+    pendingCheckoutId = data.checkout_id;
+    closeDock();
+    Bachs.Checkout.open({ checkoutUrl: data.checkout_url });
+  }catch(e){
+    if(e.status === 409 || e.status === 429){ showToast(e.message); return; } /* already claimed / daily limit — do NOT place */
+    console.warn('Live claim unavailable → demo mode:', e.message || e);
+    founderCount++; updateClaimUI();
+    placeLocalPerson(d, 'Demo mode — ' + (e.message || 'payments unreachable') + '. Placed you locally.');
+  }
+}
+
+/* local (demo) placement — same experience, in-memory only */
+function placeLocalPerson(d, note){
+  const person = makePerson(d.country, d.name, FIELDS.find(f => f.name === d.field), d.bio, d.project, d.city);
+  person.demo = true;
+  person.id = demoSeq++;
+  person.founder = claimMode !== 'paid' && founderCount <= FOUNDER_LIMIT;
+  person.position = ++demoPosition;   /* ranked by oldest member: first claim = #1 */
+  let positions = d.spots > 1 ? findRun(d.country, d.spots) : null;
+  if(!positions) positions = pickEmpty(d.country, d.spots);
+  if(!positions.length){ showToast(GEO[d.country].name + ' is full — try another country.'); return; }
   positions.forEach(pos => {
-    cells[pos.y*N+pos.x].person = person;
-    macros[code].claimed++;
-    macros[code].people.push(person);
+    const c = cells[pos.y*N+pos.x];
+    if(c && !c.ocean){ c.person = person; macros[d.country].claimed++; macros[d.country].people.push(person); }
   });
   person._i = positions[0].y*N + positions[0].x;
   allPeople.push(person);
   rebuildLow();
   closeDock();
-  fly(person._i % N + 0.5, ((person._i / N)|0) + 0.5, spots > 1 ? 5 : 8, () => openPerson(person));
-  showToast(`You’re on the turf, F. 🌍 #${person.id.toLocaleString('en-US')}`);
+  fly(person._i % N + 0.5, ((person._i / N)|0) + 0.5, d.spots > 1 ? 5 : 8, () => openPerson(person));
+  showToast(note);
   refreshIntroCount();
+  buildTop20();
 }
+
+function pickEmpty(code, spots){
+  const positions = [];
+  const empties = [];
+  for(const inst of macros[code].instances)
+    for(let y=0;y<10;y++)for(let x=0;x<10;x++){
+      const d = cells[(inst.mr*10+y)*N + (inst.mc*10+x)];
+      if(!d.ocean && !d.person) empties.push({x: inst.mc*10+x, y: inst.mr*10+y});
+    }
+  for(let k=0;k<spots && empties.length;k++) positions.push(empties.splice(Math.floor(Math.random()*empties.length),1)[0]);
+  return positions;
+}
+
+/* ---- Bachs SDK events (UI only — the webhook is the source of truth) ---- */
+function initBachs(){
+  if(typeof Bachs === 'undefined' || !Bachs || !Bachs.Initialize) return;
+  Bachs.Initialize({
+    onEvent: (event) => {
+      if(event.type === 'checkout.completed'){
+        showToast('Payment confirmed 🎉 Placing you on the turf…');
+        if(pendingCheckoutId) pollClaim(pendingCheckoutId);
+      } else if(event.type === 'checkout.failed'){
+        showToast('Payment failed — your turf is still here. Try again.');
+      } else if(event.type === 'checkout.expired'){
+        showToast('Checkout expired — start again when ready.');
+      }
+    },
+  });
+}
+
+async function pollClaim(checkoutId, tries){
+  tries = tries || 10;
+  for(let k = 0; k < tries; k++){
+    try{
+      const r = await fetch('api/claim-status?checkout_id=' + encodeURIComponent(checkoutId));
+      const s = await r.json();
+      if(s.status === 'paid'){
+        const r2 = await fetch('api/claim?checkout_id=' + encodeURIComponent(checkoutId));
+        const cl = await r2.json();
+        if(cl && cl.cells){ applyRealClaim(cl, 'paid'); return; }
+      }
+      if(s.status === 'failed' || s.status === 'expired'){
+        showToast('Payment didn’t complete — your turf is still waiting. Try again.');
+        return;
+      }
+    }catch(e){ /* keep polling */ }
+    await new Promise(res => setTimeout(res, 1500));
+  }
+  showToast('Payment received — your spot is being confirmed, F.');
+}
+
+/* render a stored claim (free or paid) onto the map */
+function applyRealClaim(cl, kind){
+  const p = makeRealPerson(cl);
+  p.founder = kind === 'free' || cl.status === 'free';
+  p.position = cl.position || ++demoPosition;
+  let first = null;
+  (cl.cells || []).forEach(i => {
+    const c = cells[i];
+    if(c && !c.ocean && !c.person){ c.person = p; if(first === null) first = i; }
+  });
+  if(first === null){
+    showToast('Your turf is on the map. Zoom to ' + GEO[cl.country].name + ' to find it.');
+    return;
+  }
+  p._i = first;
+  allPeople.push(p);
+  macros[cl.country].claimed += cl.spots;
+  macros[cl.country].people.push(p);
+  rebuildLow();
+  fly(p._i % N + 0.5, ((p._i / N)|0) + 0.5, cl.spots > 1 ? 5 : 8, () => openPerson(p));
+  showToast(kind === 'free'
+    ? 'You’re on the turf, F. ⭐ Founder spot secured!'
+    : 'You’re on the turf, F. 🌍' + (cl.spots > 1 ? ' · ' + cl.spots + ' spots' : ''));
+  refreshIntroCount();
+  buildTop20();
+}
+
+/* load paid + free claims from Supabase and render them on the world */
+async function loadRealClaims(){
+  try{
+    const r = await fetch('api/claims', { cache: 'no-store' });
+    if(!r.ok) return;
+    const list = await r.json();
+    let placed = 0;
+    (list || []).forEach(cl => {
+      const p = makeRealPerson(cl);
+      p.founder = cl.status === 'free';
+      p.position = cl.position || null;
+      let first = null;
+      (cl.cells || []).forEach(i => {
+        const c = cells[i];
+        if(c && !c.ocean && !c.person){ c.person = p; if(first === null) first = i; }
+      });
+      if(first !== null){
+        p._i = first;
+        allPeople.push(p);
+        macros[cl.country].claimed += cl.spots;
+        macros[cl.country].people.push(p);
+        placed++;
+      }
+    });
+    if(placed){ rebuildLow(); refreshIntroCount(); buildTop20(); draw(); }
+  }catch(e){ /* offline / static preview — demo world only */ }
+}
+
+(function handleCheckoutParam(){
+  try{
+    const p = new URLSearchParams(window.location.search);
+    if(p.get('checkout') === 'success') showToast('If your payment went through, your turf is on its way 🌍');
+    else if(p.get('checkout') === 'cancel') showToast('Checkout cancelled — your turf is still waiting, F.');
+  }catch(e){}
+})();
 
 /* ---- countries view ---- */
 function buildCountries(){
@@ -592,6 +864,33 @@ function buildCountries(){
   }));
 }
 
+/* ---- Top 20 — highest visibility, ranked by oldest member ---- */
+const MEDALS = ['🥇', '', '🥉'];
+function top20People(){
+  return allPeople.filter(p => p.position && p.position <= 20).sort((a,b) => a.position - b.position);
+}
+function buildTop20(){
+  const list = document.getElementById('top20List');
+  if(!list) return;
+  const ppl = top20People();
+  list.innerHTML = ppl.length ? ppl.map(p => `
+      <div class="top20-row${p.position <= 3 ? ' gold' : ''}" data-i="${p._i}">
+        <span class="top20-rank">${MEDALS[p.position-1] || '#' + p.position}</span>
+        <span class="top20-name">${p.name}</span>
+        <span class="top20-loc">${GEO[p.country].flag} ${p.city}</span>
+        <span class="top20-field">${p.field}</span>
+      </div>`).join('')
+  : '<p class="top20-empty">The first 20 people claim the top of the map. Oldest members first.</p>';
+  document.getElementById('top20Foot').textContent = ppl.length + ' OF 20 CLAIMED — RANKED BY OLDEST MEMBER';
+  list.querySelectorAll('.top20-row').forEach(r => r.addEventListener('click', () => {
+    const i = +r.dataset.i;
+    const p = cells[i] && cells[i].person;
+    if(!p) return;
+    closeDock();
+    fly(i % N + 0.5, ((i / N)|0) + 0.5, 10, () => openPerson(p));
+  }));
+}
+
 function refreshIntroCount(){
   totalMapped = allPeople.length;
   document.getElementById('introCount').textContent = totalMapped.toLocaleString('en-US') + ' ON THE TURF — AND COUNTING';
@@ -601,5 +900,10 @@ function refreshIntroCount(){
 /* ---- init ---- */
 buildClaimForm();
 buildCountries();
+buildTop20();
 refreshIntroCount();
 resize();
+updateClaimUI();
+fetchClaimMode();
+loadRealClaims();
+initBachs();

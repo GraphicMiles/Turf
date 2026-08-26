@@ -1,0 +1,12 @@
+{
+  "name": "turf",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TURF F. — a living map of people on Earth. Claim your turf for ₦100.",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}

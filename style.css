@@ -303,6 +303,79 @@ img { display: block; max-width: 100%; }
   display: flex; gap: 8px; align-items: flex-start;
 }
 .privacy-note i { color: var(--accent-blue); margin-top: 1px; flex: none; }
+/* founder-tier countdown (200 → 0) */
+.countdown {
+  border: 2px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+  background: var(--bg-card);
+  padding: 10px 11px 9px;
+  margin: 2px 0 12px;
+}
+.countdown-head {
+  font-family: var(--font-mono);
+  font-size: 0.56rem; font-weight: 700; letter-spacing: 0.14em;
+  margin-bottom: 7px;
+}
+.countdown-head i { color: var(--accent-orange); }
+.countdown-row { display: flex; align-items: center; gap: 11px; }
+.countdown-num {
+  font-family: var(--font-mono);
+  font-size: 1.75rem; font-weight: 700; line-height: 1;
+  min-width: 2.9rem; text-align: right;
+}
+.countdown-bar {
+  flex: 1; height: 15px;
+  border: 2px solid var(--border-color);
+  background: var(--bg-card-alt);
+  overflow: hidden;
+}
+.countdown-fill {
+  height: 100%;
+  background: var(--accent-green);
+  transform-origin: left;
+  transition: transform 0.4s ease;
+}
+.countdown-sub {
+  font-family: var(--font-mono);
+  font-size: 0.5rem; font-weight: 700; letter-spacing: 0.09em;
+  color: var(--text-dim);
+  margin-top: 7px;
+}
+.countdown.paid .countdown-num { color: var(--primary); }
+.countdown.paid .countdown-fill { background: var(--accent-slop); }
+
+/* Top 20 leaderboard */
+.top20-list { display: flex; flex-direction: column; border: 2px solid var(--border-color); }
+.top20-row {
+  display: grid;
+  grid-template-columns: 2.4rem 1fr auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 9px 11px;
+  cursor: pointer;
+  border-bottom: 1.5px solid rgba(30, 39, 46, 0.2);
+  transition: background 0.12s ease;
+}
+.top20-row:last-child { border-bottom: none; }
+.top20-row:hover { background: var(--bg-card-alt); }
+.top20-rank {
+  font-family: var(--font-mono);
+  font-size: 0.85rem; font-weight: 700;
+}
+.top20-name { font-size: 0.82rem; font-weight: 900; }
+.top20-loc { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); }
+.top20-field {
+  grid-column: 2 / 4;
+  font-family: var(--font-mono);
+  font-size: 0.54rem; font-weight: 700; letter-spacing: 0.1em;
+  color: var(--text-dim); text-transform: uppercase;
+}
+.top20-row.gold { background: rgba(255, 211, 42, 0.18); }
+.top20-row.gold:hover { background: rgba(255, 211, 42, 0.3); }
+.top20-empty {
+  padding: 18px 12px;
+  font-size: 0.78rem; font-weight: 700; color: var(--text-muted); text-align: center;
+}
 
 /* ---- countries list ---- */
 .country-list { display: flex; flex-direction: column; }

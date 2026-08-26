@@ -27,6 +27,9 @@
       <span class="pm-btn" id="pmExplore" title="Take me somewhere">
         <i class="fa-solid fa-dice"></i><span class="lbl">Explore</span>
       </span>
+      <span class="pm-btn" id="pmTop20" title="Top 20 — highest visibility on the map">
+        <i class="fa-solid fa-trophy"></i><span class="lbl">Top 20</span>
+      </span>
       <span class="pm-btn" id="pmCountries" title="People by country">
         <i class="fa-solid fa-flag"></i><span class="lbl">People by Country</span>
       </span>
@@ -95,7 +98,7 @@
     <!-- VIEW: CLAIM -->
     <section class="dock-view" id="viewClaim" hidden>
       <h2 class="dock-title">Claim your turf</h2>
-      <p class="dock-sub">A piece of Earth. Forever. <b>₦100</b>.</p>
+      <p class="dock-sub" id="claimSub">A piece of Earth. Forever. <b>₦100</b>.</p>
       <form id="claimForm" novalidate>
         <div class="claim-preview-wrap">
           <img class="claim-preview" id="claimPreview" alt="Your preview" />
@@ -154,10 +157,27 @@
           <p class="field-note mono">MAX 10 SPOTS PER PERSON · ADJACENT CELLS WHERE POSSIBLE</p>
         </div>
 
-        <p class="privacy-note"><i class="fa-solid fa-circle-info"></i> Your spot is placed at city/region level with randomized position — we never reveal precise coordinates.</p>
+        <p class="privacy-note"><i class="fa-solid fa-circle-info"></i> Your spot is placed at city/region level with a randomized map position — we never reveal precise coordinates.</p>
 
-        <span class="cta full" id="cfSubmit"><p>Place me on the turf →</p><i class="fa-solid fa-bolt"></i></span>
+        <div class="countdown" id="claimCountdown">
+          <div class="countdown-head mono"><i class="fa-solid fa-star"></i> FOUNDER SPOTS · FREE TIER</div>
+          <div class="countdown-row">
+            <span class="countdown-num mono" id="countdownNum">200</span>
+            <div class="countdown-bar"><div class="countdown-fill" id="countdownFill"></div></div>
+          </div>
+          <p class="countdown-sub mono" id="countdownSub">FIRST 200 CLAIMS ARE FREE — WHEN IT HITS 0, PAYMENT ACTIVATES</p>
+        </div>
+
+        <span class="cta full" id="cfSubmit"><p id="cfSubmitLabel">Claim free → founder spot</p><i class="fa-solid fa-bolt"></i></span>
       </form>
+    </section>
+
+    <!-- VIEW: TOP 20 -->
+    <section class="dock-view" id="viewTop20" hidden>
+      <h2 class="dock-title"><i class="fa-solid fa-trophy" style="color:var(--accent-orange)"></i> Top 20</h2>
+      <p class="dock-sub">Highest visibility on the map. Oldest members first — claim early, rank high.</p>
+      <div class="top20-list" id="top20List"></div>
+      <p class="country-foot mono" id="top20Foot"></p>
     </section>
 
     <!-- VIEW: COUNTRIES -->
@@ -172,6 +192,8 @@
   <!-- ================= TOASTS ================= -->
   <div class="toast-container" id="toastContainer"></div>
 
+  <!-- Bachs overlay checkout SDK — the card form stays inside Bachs' iframe -->
+  <script src="https://checkout.bachs.io/bachs.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
