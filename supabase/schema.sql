@@ -371,3 +371,28 @@ $$;
 grant execute on function public.ladder_view(integer, integer) to service_role;
 grant execute on function public.settle_ladder(text) to service_role;
 grant execute on function public.expire_ladder_locks() to service_role;
+
+-- ============================================================================
+-- DATA API SETTINGS (Supabase dashboard → Settings → API) — 2026-08-26
+--   Enable Data API:                 ON   (functions use it via service_role)
+--   Expose new tables automatically: OFF  (anon gets nothing; grant manually)
+--   RLS on new tables automatically: ON   (matches our no-public-policies model)
+--
+-- With auto-exposure OFF, grants must be explicit. Lockdown + future-proofing:
+-- service_role gets everything; anon/authenticated get NOTHING on any table
+-- (RLS already blocks them — this belt-and-braces revoke holds even if RLS
+-- were ever dropped by mistake).
+-- ============================================================================
+revoke all on all tables    in schema public from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
+
+grant usage on schema public to service_role;
+grant all on all tables    in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+
+-- future tables created as postgres in public → service_role keeps access,
+-- anon/authenticated never do
+alter default privileges in schema public
+  grant all on tables, sequences to service_role;
+alter default privileges in schema public
+  revoke all on tables, sequences from anon, authenticated;
