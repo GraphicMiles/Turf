@@ -180,5 +180,9 @@
     return out.length === spots ? out : null;
   }
 
-  return { N, WORLD, GEO, NAMES, FIELDS, build, assignCells, mulberry32 };
+  function macroKeyOf(x, y){
+    return Math.floor(y / 10) + '-' + Math.floor(x / 10);
+  }
+
+  return { N, WORLD, GEO, NAMES, FIELDS, build, assignCells, macroKeyOf, mulberry32 };
 });

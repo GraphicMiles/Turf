@@ -6,7 +6,7 @@
    Returns: { checkout_url, checkout_id }
    ========================================================================== */
 const crypto = require('crypto');
-const { WORLD, build, assignCells } = require('../world-core.js');
+const { N, WORLD, build, assignCells, macroKeyOf } = require('../world-core.js');
 const getSupabase = require('../lib/supabase.js');
 
 const PRICES = { 1: '100.00', 5: '500.00', 10: '1000.00' };
@@ -106,13 +106,29 @@ exports.default = async (req, res) => {
     const world = build(); // deterministic — same world the frontend renders
     const used = new Set();
     world.allPeople.forEach(p => used.add(p._i));
-    const { data: liveClaims } = await supa
-      .from('claims').select('cells').in('status', ['pending', 'paid', 'free']);
-    (liveClaims || []).forEach(c => (c.cells || []).forEach(i => used.add(i)));
+    for (const inst of world.macros[country].instances) {
+      const keys = [inst.mr + '-' + inst.mc];
+      if (inst.mc > 0) keys.push(inst.mr + '-' + (inst.mc - 1));
+      const { data: local } = await supa
+        .from('claims').select('cells').in('status', ['pending', 'paid', 'free'])
+        .in('macro', keys);
+      (local || []).forEach(c => (c.cells || []).forEach(i => used.add(i)));
+    }
 
     const cellsArr = assignCells(country, spots, used);
     if (!cellsArr) {
       return res.status(409).json({ error: country + ' is fully mapped — pick another country' });
+    }
+    const macroKey = macroKeyOf(cellsArr[0] % N, Math.floor(cellsArr[0] / N));
+
+    /* optional photo: verify the uploaded object exists, store its public URL */
+    let imageUrl = null;
+    const imagePath = String(body.image_path || '');
+    if (/^[0-9a-f-]{36}\.webp$/.test(imagePath)) {
+      try {
+        const { data: obj, error: statErr } = await supa.storage.from('people').stat(imagePath);
+        if (!statErr && obj) imageUrl = supa.storage.from('people').getPublicUrl(imagePath).data.publicUrl;
+      } catch (e) { /* ignore unreadable path */ }
     }
 
     await supa.from('claims').insert({
@@ -128,6 +144,8 @@ exports.default = async (req, res) => {
       ip,
       spots,
       cells: cellsArr,
+      macro: macroKey,
+      image_url: imageUrl,
       checkout_id: session.checkout_id,
       status: 'pending',
     });

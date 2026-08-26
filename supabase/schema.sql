@@ -22,6 +22,8 @@ create table if not exists public.claims (
   spots              integer not null default 1 check (spots in (1, 5, 10)),
   cells              jsonb not null default '[]',  -- cell indexes on the 100×100 grid
   position           integer unique,               -- global rank: oldest member = 1 (assigned on settlement)
+  macro              text,                          -- "mr-mc" of the FIRST cell (sector fetch index)
+  image_url          text,                          -- public photo URL (Supabase Storage)
   checkout_id        text unique,                  -- Bachs chk_…
   charge_id          text,                         -- Bachs ch_… (set on payment)
   status             text not null default 'pending'
@@ -32,6 +34,8 @@ create table if not exists public.claims (
 create index if not exists claims_status_idx   on public.claims (status);
 create index if not exists claims_country_idx  on public.claims (country);
 create index if not exists claims_checkout_idx on public.claims (checkout_id);
+create index if not exists claims_ip_day_idx   on public.claims (ip, created_at);
+create index if not exists claims_macro_idx    on public.claims (macro);
 
 -- No accounts: the claim data IS the identity.
 -- Same name + email can only ever claim once.
@@ -53,3 +57,40 @@ alter table public.webhook_events  enable row level security;
 drop policy if exists "read settled claims" on public.claims;
 create policy "read settled claims" on public.claims
   for select using (status in ('paid','free'));
+
+-- ============================================================================
+-- IMAGES — Supabase Storage
+-- Bucket 'people' is PUBLIC READ (profile photos are public data).
+-- Writes happen ONLY via service-role signed upload URLs minted by
+-- /api/upload-url — the browser never touches the service key.
+-- Path layout:  people/<claim-or-temp-uuid>.webp  (client pre-compresses to ≤512px WebP)
+-- ============================================================================
+insert into storage.buckets (id, name, public)
+values ('people', 'people', true)
+on conflict (id) do nothing;
+
+drop policy if exists "people public read" on storage.objects;
+create policy "people public read" on storage.objects
+  for select using (bucket_id = 'people');
+-- (no insert/update/delete policies: uploads are service-role signed URLs only)
+
+-- ============================================================================
+-- SCALE PATH — aggregates for the summary endpoint
+-- At ≤100k claims, /api/summary queries directly (fine).
+-- Beyond that, refresh these on a schedule (pg_cron or app trigger) and read
+-- from them instead:
+--   select * from mv_country_counts;
+--   select * from mv_top20;
+-- (enable the pg_cron extension first: create extension pg_cron;)
+-- ============================================================================
+create materialized view if not exists mv_country_counts as
+  select country, count(*)::bigint as people
+  from public.claims
+  where status in ('paid', 'free')
+  group by country;
+
+create materialized view if not exists mv_top20 as
+  select position, name, country, city, field, cells, status
+  from public.claims
+  where status in ('paid', 'free') and position <= 20
+  order by position;

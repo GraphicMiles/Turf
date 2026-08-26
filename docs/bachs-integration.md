@@ -414,3 +414,41 @@ Pay to claim a higher spot — **no account needed, because the data is the iden
   - `POST /api/upgrade-position` — validates identity (existing settled claim), validates target (1 < target < current position, target not taken), computes cost, stores a pending upgrade row, creates the Bachs session, returns `checkout_url`.
   - Webhook: on success, apply the shift (update `position` for the mover + the shifted band), mark the upgrade paid.
 - **Top 20 boundary:** an upgrade that lands someone inside the top 20 flips on the gold ring + leaderboard immediately.
+
+---
+
+## 15. Scaling & storage architecture
+
+### Where each thing lives
+| Data | Store | Notes |
+|---|---|---|
+| Claims (name, bio, position, cells, ip…) | Supabase **Postgres** `claims` | 1M rows ≈ 1–2 GB — trivial for Postgres. Every hot path is index-driven: `position` (unique), `macro`, `(ip, created_at)`, `(lower(name), lower(email))`, `checkout_id`. |
+| **Images** (claim photos) | Supabase **Storage** — public bucket `people` | Object storage, never Postgres. Browser uploads via **service-role signed URLs** minted by `/api/upload-url` (the service key never reaches the browser). Public read CDN URL stored on the claim row (`image_url`). |
+| World view (colors at zoom-out) | **`/api/worldmap.png`** — server-rendered 100×100 PNG (few KB), 30 s in-memory cache + CDN headers | Replaces "send the whole population to every browser". |
+| Per-person detail | **`/api/claims?macro=mr-mc`** — one 10×10 sector | A sector holds ≤ ~100 claims. The map lazy-loads only visible sectors when zoom ≥ detail threshold, then caches them. |
+| Aggregates (total, per-country, top 20) | **`/api/summary`** | Top 20 is a 20-row query on the unique `position` index. Per-country counts: direct query at ≤100k rows; materialized views `mv_country_counts` / `mv_top20` are in the schema, ready for a scheduled refresh beyond that. |
+
+### Why this scales
+- **No endpoint ever returns the whole population.** Page load = 1 tiny PNG + 1 small summary JSON. Detail arrives per sector, on demand, cached in the tab.
+- **Cell allocation is O(macro), not O(world):** claim endpoints only query occupancy of the country's macros (≤ ~100 rows each), so a 10k-claim map and a 10M-claim map allocate the same cost.
+- **Postgres comfortably holds the full vision:** 1,000,000 claims ≈ 1–2 GB; Supabase Pro (8 GB+) has 5× headroom, and PITR backups are automatic. No sharding needed.
+- **Concurrency:** `position` unique index + retry-on-conflict keeps ranking consistent under parallel webhooks; the identity unique index makes dedupe race-proof; webhook dedupe via `webhook_events`.
+
+### The grid itself
+- Today: 100×100 = **10,000 spots** (the 100:1 preview). That ceiling is a product setting, not a DB limit.
+- The full 1M map = 1000×1000 grid: same tables, same endpoints, `N = 1000`. Sectors stay 10×10 (10,000 sectors, each still ≤ ~100 claims); the world bitmap becomes 10×10 tiles (still a few KB each, fetched per visible tile).
+
+### Images — pipeline & scale
+1. Browser: resize to ≤512 px on the long edge, compress to **WebP q0.8** (~100–300 KB), preview shown in the claim dock.
+2. `POST /api/upload-url` — validates (image/*, ≤1 MB, identity not taken) → mints a short-lived signed upload URL.
+3. Browser `PUT`s the file **directly to Supabase Storage** — zero traffic through Vercel.
+4. Claim endpoint verifies the object exists (`stat`) and stores the **public CDN URL** on the claim row.
+5. Person card renders the photo (peep artwork remains the fallback for text-only claims).
+- Claims are **immutable**, so image URLs never change — CDN caching is trivially safe.
+- Cost at scale: 1M photos × ~200 KB ≈ 200 GB object storage; egress is the line item to watch. If it matters, the bucket can be swapped to **Cloudflare R2 (zero egress fees)** without touching the app (same S3-style URL model).
+
+### Other "etc."
+- **Abuse:** 3 claims/IP/day (429), identity dedupe (409), signed-only storage writes, webhook HMAC verification, Vercel/WAF in front of production.
+- **Search** ("find my friend"): not built; the cheap path is a `pg_trgm` index on `name` + `GET /api/people?q=`.
+- **Ops:** Supabase logs + Vercel function logs; Bachs portal shows webhook delivery health + replay.
+- **Backups:** Supabase PITR (paid plans); `webhook_events` can be pruned nightly (30-day retention) — it's dedupe history only.

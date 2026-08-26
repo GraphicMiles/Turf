@@ -228,7 +228,7 @@ function draw(){
   if(s < 20){
     /* macro level: whole-wall bitmap + 10×10 macro grid + region labels */
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(low, ox, oy, N*s, N*s);
+    ctx.drawImage(lowLayer || low, ox, oy, N*s, N*s);
     ctx.strokeStyle = 'rgba(30,39,46,0.5)';
     ctx.lineWidth = 2;
     for(let k=0;k<=10;k++){
@@ -295,6 +295,7 @@ function draw(){
       ctx.strokeRect(ox+hover.x*s+1, oy+hover.y*s+1, s-2, s-2);
     }
   }
+  maybeLoadSectors();
   updateHud(s);
 }
 function queueDraw(){ if(!rafPend){ rafPend = true; requestAnimationFrame(() => { rafPend = false; draw(); }); } }
@@ -455,7 +456,7 @@ document.addEventListener('keydown', e => { if(e.key === 'Escape') closeDock(); 
 
 function openPerson(p, x, y){
   const g = GEO[p.country];
-  document.getElementById('pmAvatar').src = createPeepArtwork(p.name, p.color, p.sh);
+  document.getElementById('pmAvatar').src = p.image || createPeepArtwork(p.name, p.color, p.sh);
   const badge = document.getElementById('pmBadge');
   const top20 = p.position && p.position <= 20;
   badge.textContent = (top20 ? '⭐ TOP 20 · ' : '') + p.field.toUpperCase();
@@ -511,6 +512,25 @@ function buildClaimForm(){
   countrySel.addEventListener('change', syncCityPlaceholder);
   refreshPreview();
 
+  const photoBtn = document.getElementById('photoBtn');
+  const photoInput = document.getElementById('photoInput');
+  if(photoBtn && photoInput){
+    photoBtn.addEventListener('click', () => photoInput.click());
+    photoInput.addEventListener('change', async () => {
+      const file = photoInput.files && photoInput.files[0];
+      if(!file) return;
+      try{
+        const p = await compressImage(file);
+        pendingPhoto = p;
+        document.getElementById('claimPreview').src = p.dataUrl;
+        document.getElementById('claimPreviewTag').textContent = 'YOUR PHOTO';
+        document.getElementById('photoNote').textContent = 'PHOTO ADDED ✓';
+      }catch(e){
+        document.getElementById('photoNote').textContent = 'COULD NOT READ THAT IMAGE';
+      }
+      photoInput.value = '';
+    });
+  }
   document.querySelectorAll('.spot-chip').forEach(l => l.addEventListener('click', () => {
     document.querySelectorAll('.spot-chip').forEach(x => x.classList.remove('active'));
     document.querySelectorAll('input[name="spots"]').forEach(r => r.checked = false);
@@ -553,7 +573,15 @@ let founderCount = 0;        // real claims so far (server-synced when live)
 let claimMode = 'free';      // 'free' | 'paid' | 'demo'
 let pendingCheckoutId = null;
 let demoSeq = 490000;
-let demoPosition = 0;      // local rank counter (demo mode); live rows carry `position`
+let demoPosition = 0;
+/* ---- live mode (Vercel + Supabase) vs demo mode (static preview) ---- */
+let MODE = 'demo';            /* 'demo' | 'live' */
+let lowLayer = null;          /* server world bitmap; falls back to the local mock canvas */
+let liveLoaded = new Set();   /* sector (macro) keys already fetched */
+let liveCountryCounts = null; /* from /api/summary */
+let liveTop20 = [];           /* from /api/summary */
+let liveTotal = 0;            /* from /api/summary */
+let pendingPhoto = null;      /* { blob, dataUrl } for the claim form */      // local rank counter (demo mode); live rows carry `position`
 
 function isFreeClaim(){ return claimMode !== 'paid' && founderCount < FOUNDER_LIMIT; }
 function freeRemaining(){ return Math.max(0, FOUNDER_LIMIT - founderCount); }
@@ -653,13 +681,158 @@ function claim(){
   placeLocalPerson(d, 'Demo mode — ' + (bachsReady ? 'backend unreachable' : 'payments go live on the deployed site') + '. Placed you locally.');
 }
 
+/* ---- live mode: probe, world bitmap, sector lazy-load, summary ---- */
+async function probeLive(){
+  if(typeof fetch !== 'function') return; /* static preview → demo world */
+  try{
+    const r = await fetch('api/claim-mode', { cache: 'no-store' });
+    if(r.ok){
+      const m = await r.json();
+      if(m && typeof m.count === 'number'){
+        MODE = 'live';
+        claimMode = m.mode === 'paid' ? 'paid' : 'free';
+        founderCount = m.count;
+        allPeople.length = 0;               /* in live mode the world = real claims */
+        cells.forEach(c => { c.person = null; });
+        rebuildLow();
+        updateClaimUI();
+        fetchWorldBitmap();
+        fetchSummary();
+        draw();
+        return;
+      }
+    }
+  }catch(e){ /* offline → demo */ }
+  loadRealClaims();
+}
+
+async function fetchWorldBitmap(){
+  try{
+    const r = await fetch('api/worldmap.png', { cache: 'no-store' });
+    if(!r.ok) return;
+    const blob = await r.blob();
+    const img = new Image();
+    img.onload = () => { lowLayer = img; draw(); };
+    img.src = URL.createObjectURL(blob);
+  }catch(e){ /* keep the local layer */ }
+}
+
+async function fetchSummary(){
+  try{
+    const r = await fetch('api/summary', { cache: 'no-store' });
+    if(!r.ok) return;
+    const sm = await r.json();
+    liveTotal = sm.total || 0;
+    liveCountryCounts = sm.byCountry || null;
+    liveTop20 = sm.top20 || [];
+    refreshIntroCount();
+    buildCountries();
+    buildTop20();
+  }catch(e){}
+}
+
+function loadSector(k){
+  if(liveLoaded.has(k)) return Promise.resolve();
+  liveLoaded.add(k);
+  return fetch('api/claims?macro=' + k)
+    .then(r => r.ok ? r.json() : [])
+    .then(list => { (list || []).forEach(cl => placeLiveClaim(cl, false)); draw(); })
+    .catch(() => {});
+}
+
+function maybeLoadSectors(){
+  if(MODE !== 'live') return;
+  const s2 = base * cam.z;
+  if(s2 < 26) return; /* world zoom: the bitmap already carries all colors */
+  const ox = W/2 - cam.x*s2, oy = H/2 - cam.y*s2;
+  const x0 = Math.max(0, Math.floor(-ox/s2)), x1 = Math.min(N-1, Math.ceil((W-ox)/s2));
+  const y0 = Math.max(0, Math.floor(-oy/s2)), y1 = Math.min(N-1, Math.ceil((H-oy)/s2));
+  for(let mr = Math.floor(y0/10); mr <= Math.min(9, Math.floor(y1/10)); mr++)
+    for(let mc = Math.floor(x0/10); mc <= Math.min(9, Math.ceil(x1/10)); mc++)
+      if(mr >= 0 && mc >= 0) loadSector(mr + '-' + mc);
+}
+
+function placeLiveClaim(cl, animate){
+  const p = makeRealPerson(cl);
+  p.image = cl.image_url || null;
+  p.founder = cl.status === 'free';
+  p.position = cl.position || null;
+  let first = null;
+  (cl.cells || []).forEach(i => {
+    const c = cells[i];
+    if(c && !c.ocean && !c.person){ c.person = p; if(first === null) first = i; }
+  });
+  if(first === null) return;
+  p._i = first;
+  allPeople.push(p);
+  if(animate){
+    fly(p._i % N + 0.5, ((p._i / N)|0) + 0.5, cl.spots > 1 ? 5 : 8, () => openPerson(p));
+    showToast(cl.status === 'free'
+      ? 'You\u2019re on the turf, F. \u2B50 Founder spot secured!'
+      : 'You\u2019re on the turf, F. \uD83C\uDF0D' + (cl.spots > 1 ? ' \u00B7 ' + cl.spots + ' spots' : ''));
+    refreshIntroCount();
+    buildTop20();
+  }
+}
+
+function compressImage(file){
+  return new Promise((resolve, reject) => {
+    try{
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        try{
+          const S = 512;
+          const scale = Math.min(1, S / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const cv2 = document.createElement('canvas');
+          cv2.width = w; cv2.height = h;
+          cv2.getContext('2d').drawImage(img, 0, 0, w, h);
+          const dataUrl = cv2.toDataURL('image/webp', 0.8);
+          cv2.toBlob(b => {
+            URL.revokeObjectURL(url);
+            if(b) resolve({ blob: b, dataUrl: dataUrl });
+            else reject(new Error('could not compress image'));
+          }, 'image/webp', 0.8);
+        }catch(e2){ URL.revokeObjectURL(url); reject(e2); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')); };
+      img.src = url;
+    }catch(e){ reject(e); }
+  });
+}
+
+async function tryUploadPhoto(d){
+  if(!pendingPhoto) return null;
+  try{
+    const up = await fetch('api/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: d.name, type: 'image/webp', size: pendingPhoto.blob.size }),
+    });
+    const u = await up.json().catch(() => ({}));
+    if(!up.ok || !u.uploadUrl) throw new Error(u.error || 'Photo upload unavailable');
+    const put = await fetch(u.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/webp' }, body: pendingPhoto.blob });
+    if(!put.ok) throw new Error('Photo upload failed');
+    const path = u.path;
+    pendingPhoto = null;
+    return path;
+  }catch(e){
+    showToast(e.message + ' \u2014 claiming without a photo.');
+    pendingPhoto = null;
+    return null;
+  }
+}
+
 /* live free founder claim → stored in Supabase with status 'free' */
 async function startFreeClaim(d){
   try{
+    const imagePath = await tryUploadPhoto(d);
     const res = await fetch('api/free-claim', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(d),
+      body: JSON.stringify(Object.assign({}, d, { image_path: imagePath })),
     });
     const row = await res.json().catch(() => ({}));
     if(!res.ok || !row.cells){
@@ -682,10 +855,11 @@ async function startFreeClaim(d){
    webhook confirms, we poll for UX */
 async function startLiveClaim(d){
   try{
+    const imagePath = await tryUploadPhoto(d);
     const res = await fetch('api/create-checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(d),
+      body: JSON.stringify(Object.assign({}, d, { image_path: imagePath })),
     });
     const data = await res.json().catch(() => ({}));
     if(!res.ok || !data.checkout_url){
@@ -711,6 +885,7 @@ function placeLocalPerson(d, note){
   person.id = demoSeq++;
   person.founder = claimMode !== 'paid' && founderCount <= FOUNDER_LIMIT;
   person.position = ++demoPosition;   /* ranked by oldest member: first claim = #1 */
+  if(pendingPhoto){ person.image = pendingPhoto.dataUrl; pendingPhoto = null; }
   let positions = d.spots > 1 ? findRun(d.country, d.spots) : null;
   if(!positions) positions = pickEmpty(d.country, d.spots);
   if(!positions.length){ showToast(GEO[d.country].name + ' is full — try another country.'); return; }
@@ -779,31 +954,7 @@ async function pollClaim(checkoutId, tries){
 }
 
 /* render a stored claim (free or paid) onto the map */
-function applyRealClaim(cl, kind){
-  const p = makeRealPerson(cl);
-  p.founder = kind === 'free' || cl.status === 'free';
-  p.position = cl.position || ++demoPosition;
-  let first = null;
-  (cl.cells || []).forEach(i => {
-    const c = cells[i];
-    if(c && !c.ocean && !c.person){ c.person = p; if(first === null) first = i; }
-  });
-  if(first === null){
-    showToast('Your turf is on the map. Zoom to ' + GEO[cl.country].name + ' to find it.');
-    return;
-  }
-  p._i = first;
-  allPeople.push(p);
-  macros[cl.country].claimed += cl.spots;
-  macros[cl.country].people.push(p);
-  rebuildLow();
-  fly(p._i % N + 0.5, ((p._i / N)|0) + 0.5, cl.spots > 1 ? 5 : 8, () => openPerson(p));
-  showToast(kind === 'free'
-    ? 'You’re on the turf, F. ⭐ Founder spot secured!'
-    : 'You’re on the turf, F. 🌍' + (cl.spots > 1 ? ' · ' + cl.spots + ' spots' : ''));
-  refreshIntroCount();
-  buildTop20();
-}
+function applyRealClaim(cl, kind){ placeLiveClaim(cl, true); }
 
 /* load paid + free claims from Supabase and render them on the world */
 async function loadRealClaims(){
@@ -844,15 +995,17 @@ async function loadRealClaims(){
 /* ---- countries view ---- */
 function buildCountries(){
   const list = document.getElementById('countryList');
-  const rows = Object.values(macros).sort((a,b) => b.claimed - a.claimed);
+  const countFor = m => (MODE === 'live' && liveCountryCounts && typeof liveCountryCounts[m.code] === 'number') ? liveCountryCounts[m.code] : m.claimed;
+  const rows = Object.values(macros).sort((a,b) => countFor(b) - countFor(a));
   list.innerHTML = rows.map(m => {
-    const pct = (m.claimed / m.capacity) * 100;
-    const toNext = m.capacity - m.claimed;
+    const c = countFor(m);
+    const pct = (c / m.capacity) * 100;
+    const toNext = m.capacity - c;
     return `
       <div class="country-row" data-code="${m.code}">
         <span class="country-flag">${GEO[m.code].flag}</span>
         <span class="country-name">${GEO[m.code].name}</span>
-        <span class="country-count">${m.claimed.toLocaleString('en-US')}</span>
+        <span class="country-count">${c.toLocaleString('en-US')}</span>
         <span class="country-bar"><span class="fill" style="transform:scaleX(${pct/100})"></span></span>
         <span class="country-mile">${toNext > 0 ? (toNext + ' SPOTS TO ' + m.capacity) : 'FULLY MAPPED'}</span>
       </div>`;
@@ -860,13 +1013,21 @@ function buildCountries(){
   list.querySelectorAll('.country-row').forEach(r => r.addEventListener('click', () => {
     closeDock();
     flyToCountry(r.dataset.code);
-    showToast(GEO[r.dataset.code].flag + ' ' + GEO[r.dataset.code].name + ' — ' + macros[r.dataset.code].claimed.toLocaleString('en-US') + ' on the turf');
+    showToast(GEO[r.dataset.code].flag + ' ' + GEO[r.dataset.code].name + ' — ' + countFor(macros[r.dataset.code]).toLocaleString('en-US') + ' on the turf');
   }));
 }
 
 /* ---- Top 20 — highest visibility, ranked by oldest member ---- */
 const MEDALS = ['🥇', '', '🥉'];
 function top20People(){
+  if(MODE === 'live' && liveTop20.length){
+    return liveTop20.map(r => {
+      const p = { position: r.position, name: r.name, country: r.country, city: r.city, field: r.field, founder: r.status === 'free' };
+      const cs = r.cells || [];
+      p._i = cs.length ? cs[0] : -1;
+      return p;
+    }).filter(p => p._i >= 0).sort((a,b) => a.position - b.position);
+  }
   return allPeople.filter(p => p.position && p.position <= 20).sort((a,b) => a.position - b.position);
 }
 function buildTop20(){
@@ -882,9 +1043,13 @@ function buildTop20(){
       </div>`).join('')
   : '<p class="top20-empty">The first 20 people claim the top of the map. Oldest members first.</p>';
   document.getElementById('top20Foot').textContent = ppl.length + ' OF 20 CLAIMED — RANKED BY OLDEST MEMBER';
-  list.querySelectorAll('.top20-row').forEach(r => r.addEventListener('click', () => {
+  list.querySelectorAll('.top20-row').forEach(r => r.addEventListener('click', async () => {
     const i = +r.dataset.i;
-    const p = cells[i] && cells[i].person;
+    let p = cells[i] && cells[i].person;
+    if(!p && MODE === 'live'){
+      await loadSector(Math.floor(i / N / 10) + '-' + Math.floor((i % N) / 10));
+      p = cells[i] && cells[i].person;
+    }
     if(!p) return;
     closeDock();
     fly(i % N + 0.5, ((i / N)|0) + 0.5, 10, () => openPerson(p));
@@ -892,8 +1057,8 @@ function buildTop20(){
 }
 
 function refreshIntroCount(){
-  totalMapped = allPeople.length;
-  document.getElementById('introCount').textContent = totalMapped.toLocaleString('en-US') + ' ON THE TURF — AND COUNTING';
+  const total = (MODE === 'live' && liveTotal) ? liveTotal : allPeople.length;
+  document.getElementById('introCount').textContent = total.toLocaleString('en-US') + ' ON THE TURF — AND COUNTING';
   buildCountries();
 }
 
@@ -904,6 +1069,5 @@ buildTop20();
 refreshIntroCount();
 resize();
 updateClaimUI();
-fetchClaimMode();
-loadRealClaims();
+probeLive();
 initBachs();

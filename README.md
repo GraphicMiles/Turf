@@ -10,6 +10,8 @@ A living map of people on Earth — not roads, cities, or businesses. A map of h
 ## Features
 
 - **The map is the product** — full-viewport, pannable, zoomable world (10×10 macro regions × 10×10 person slots = 10,000 spots). Deterministic world, same everywhere.
+- **Photos** — claimants can attach a photo (compressed to ≤512px WebP client-side, stored in Supabase Storage via signed upload URLs; the card renders it).
+- **Scales by design** — page load is one tiny world bitmap (PNG) + one summary JSON; person detail is lazy-loaded per visible 10×10 sector (≤ ~100 rows); cell allocation is O(macro). See `docs/bachs-integration.md` §15.
 - **Founder tier** — the first **200 claims are FREE** with a **visual countdown 200 → 0** in the claim dock. At 0, payment (Bachs) activates.
 - **Position ranking** — every claim gets a global `POSITION #`, **oldest member = #1**.
 - **Top 20 = highest visibility** — gold ring on the map, ⭐ badge on the card, trophy leaderboard (🏆 top-bar button), tap to fly.
@@ -40,11 +42,15 @@ A living map of people on Earth — not roads, cities, or businesses. A map of h
 - **Vercel** — static site + serverless functions:
   - `POST /api/create-checkout` — Bachs session (paid tier) + stores pending claim
   - `POST /api/free-claim` — founder-tier claim (free)
-  - `GET /api/claim-mode` — free/paid state + remaining founder spots
+  - `GET /api/claim-mode` — free/paid state + remaining founder spots (the live probe)
   - `GET /api/claim?checkout_id=` · `GET /api/claim-status?checkout_id=` — post-payment confirmation
-  - `GET /api/claims` — settled claims for the map
-  - `POST /api/webhooks/bachs` — signature-verified fulfilment
-- **Supabase** — `claims` (position, status, ip, identity unique index) + `webhook_events` (dedupe). Run `supabase/schema.sql`.
+  - `GET /api/claims?macro=mr-mc` — settled people for one 10×10 sector (lazy-loaded by the map)
+  - `GET /api/claims` — all settled claims (demo/preview)
+  - `GET /api/summary` — total, per-country counts, top 20
+  - `GET /api/worldmap.png` — server-rendered world bitmap (few KB, 30 s cache)
+  - `POST /api/upload-url` — mint a signed photo-upload URL (Supabase Storage)
+  - `POST /api/webhooks/bachs` — signature-verified fulfilment (also assigns position)
+- **Supabase** — Postgres `claims` (position, status, ip, macro, image_url, identity unique index) + `webhook_events` (dedupe) + public Storage bucket `people` for photos. Run `supabase/schema.sql`.
 - `world-core.js` is shared by the browser **and** the server so cell allocation is identical everywhere.
 
 ## Deploy

@@ -106,6 +106,15 @@
         </div>
 
         <div class="form-row">
+          <span class="form-label">PHOTO <span style="color:var(--text-dim);letter-spacing:.06em">(OPTIONAL · MAX 1MB · SAVED AS WEBP)</span></span>
+          <div class="photo-row">
+            <span class="pm-btn small" id="photoBtn"><i class="fa-solid fa-camera"></i><span class="lbl">Add photo</span></span>
+            <span class="photo-note mono" id="photoNote"></span>
+          </div>
+          <input type="file" id="photoInput" accept="image/*" style="display:none" />
+        </div>
+
+        <div class="form-row">
           <label class="form-label" for="cfName">NAME *</label>
           <input class="form-input" id="cfName" type="text" maxlength="24" placeholder="e.g. Raji" autocomplete="off" />
         </div>
