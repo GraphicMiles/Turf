@@ -121,9 +121,9 @@
     const av = $('spAvatar');
     const src = safeSrc(h.image_url);
     av.src = src; av.hidden = !src;
+    $('spTitle').textContent = h.name ? h.name + '’s spot' : 'Spot';
     $('spRank').textContent = '#' + row.rank + (row.rank === 1 ? ' — THE TOP' : '');
     $('spName').textContent = h.name || '—';
-    $('spFieldMeta')?.remove;
     const g = GEO[h.country] || { name: '' };
     $('spMeta').textContent = [h.field, h.city, g.name].filter(Boolean).join(' · ') +
       ' · PAID ' + naira(row.amount) + (row.posts ? ' · ' + row.posts + ' POSTS' : '');
@@ -185,9 +185,15 @@
     $('cfCountry').value = 'NGA';
     $('amountChips').innerHTML = CHIPS.map(a => '<button type="button" class="amount-chip mono" data-a="' + a + '">' + naira(a) + '</button>').join('');
     $('amountChips').querySelectorAll('.amount-chip').forEach(b => b.addEventListener('click', () => {
-      $('cfAmount').value = b.dataset.a; refreshPreview();
+      $('cfAmount').value = b.dataset.a;
+      markChip(b.dataset.a);
+      refreshPreview();
     }));
-    $('cfAmount').addEventListener('input', refreshPreview);
+    function markChip(val) {
+      $('amountChips').querySelectorAll('.amount-chip').forEach(c =>
+        c.classList.toggle('sel', c.dataset.a === String(val)));
+    }
+    $('cfAmount').addEventListener('input', () => { markChip(null); refreshPreview(); });
   }
 
   function refreshPreview() {

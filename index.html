@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="ladder-page">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -15,21 +15,27 @@
 <body>
 
   <!-- ======================= top bar ======================= -->
-  <header class="ladder-top">
-    <div class="brand">TURF<span>F.</span></div>
-    <div class="ladder-stats mono">
-      <span id="statTaken">0 SPOTS</span>
-      <span id="statTop">TOP ₦0</span>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"><i class="fa-solid fa-trophy"></i></span>
+      <span class="brand-name">TURF F.</span>
+      <span class="brand-tag">THE LADDER</span>
     </div>
-    <button class="pill-btn" id="btnMySpot">🔑 MY SPOT</button>
+    <div class="topbar-actions">
+      <span class="topbar-stat mono" id="statTaken">0 SPOTS</span>
+      <span class="topbar-stat mono hide-sm" id="statTop">TOP ₦0</span>
+      <button class="pm-btn primary small" id="btnMySpot"><p>🔑 MY SPOT</p></button>
+    </div>
   </header>
 
   <!-- ======================= hero ======================= -->
   <section class="ladder-hero">
-    <h1>Pay more. Rank higher.</h1>
-    <p id="heroSub">#1 belongs to whoever paid the most — anyone can take it. Every spot starts at <b>₦100</b>; overtaking costs <b>2×</b> what the holder paid.</p>
-    <span class="cta" id="btnClaimTop"><p>Claim your spot →</p><i class="fa-solid fa-bolt"></i></span>
-    <div class="mono ladder-recent" id="recentTicker"></div>
+    <div class="ladder-hero-card">
+      <h1>PAY MORE. <span>RANK HIGHER.</span></h1>
+      <p id="heroSub">#1 belongs to whoever paid the most — anyone can take it. Every spot starts at <b>₦100</b>; overtaking costs <b>2×</b> what the holder paid.</p>
+      <span class="cta" id="btnClaimTop"><p>Claim your spot →</p><i class="fa-solid fa-bolt"></i></span>
+    </div>
+    <div class="ladder-recent mono" id="recentTicker"></div>
   </section>
 
   <!-- ======================= the ladder ======================= -->
@@ -37,7 +43,7 @@
     <div class="ladder-head mono"><span>RANK</span><span>SPOT · 20 PER ROW</span><span>PAID</span></div>
     <div id="ladder"></div>
     <div class="ladder-more">
-      <button class="pill-btn" id="btnMore">Load more ranks ↓</button>
+      <button class="pm-btn small" id="btnMore"><p>LOAD MORE RANKS ↓</p></button>
     </div>
   </main>
 
@@ -45,10 +51,11 @@
   <aside class="dock" id="dock">
     <button class="dock-close" id="dockClose"><i class="fa-solid fa-xmark"></i></button>
     <div id="viewSpot">
+      <h2 class="dock-title" id="spTitle">Spot</h2>
       <div class="spot-head">
         <img id="spAvatar" class="spot-avatar" alt="" hidden />
         <div class="spot-title">
-          <div class="spot-rank mono" id="spRank">#1</div>
+          <div><span class="spot-rank" id="spRank">#1</span></div>
           <div class="spot-name" id="spName">—</div>
           <div class="spot-meta mono" id="spMeta"></div>
         </div>
@@ -59,7 +66,7 @@
       </div>
       <div class="feed-head mono">SPOT FEED <span id="spFeedCount"></span></div>
       <div class="feed" id="spFeed">
-        <p class="feed-empty" id="spFeedEmpty">No media on this spot yet.</p>
+        <p class="feed-empty">No media on this spot yet.</p>
       </div>
     </div>
   </aside>
@@ -80,7 +87,7 @@
 
       <div class="form-row"><label class="form-label" for="cfName">NAME *</label>
         <input class="form-input" id="cfName" type="text" maxlength="24" placeholder="e.g. Raji" autocomplete="off" /></div>
-      <div class="form-row two">
+      <div class="form-row split">
         <div><label class="form-label" for="cfField">FIELD</label><select class="form-input" id="cfField"></select></div>
         <div><label class="form-label" for="cfCountry">COUNTRY</label><select class="form-input" id="cfCountry"></select></div>
       </div>
@@ -90,7 +97,7 @@
         <input class="form-input" id="cfBio" type="text" maxlength="80" autocomplete="off" /></div>
       <div class="form-row"><label class="form-label" for="cfProject">THE ONE THING YOU WANT THE WORLD TO FIND</label>
         <input class="form-input" id="cfProject" type="text" maxlength="48" autocomplete="off" /></div>
-      <div class="form-row two">
+      <div class="form-row split">
         <div><label class="form-label" for="cfWeb">WEB</label><input class="form-input" id="cfWeb" type="text" maxlength="60" placeholder="yourname.com" autocomplete="off" /></div>
         <div><label class="form-label" for="cfSocial">SOCIAL</label><input class="form-input" id="cfSocial" type="text" maxlength="60" placeholder="@handle" autocomplete="off" /></div>
       </div>
@@ -120,16 +127,16 @@
       </div>
       <div id="myEdit" hidden>
         <div class="spot-head"><div class="spot-title">
-          <div class="spot-rank mono" id="myRank">#—</div>
+          <div><span class="spot-rank" id="myRank">#—</span></div>
           <div class="spot-name" id="myName">—</div>
           <div class="spot-meta mono" id="myMeta"></div>
         </div></div>
-        <div class="form-row two">
+        <div class="form-row split">
           <div><label class="form-label">CITY</label><input class="form-input" id="myCity" type="text" maxlength="24" /></div>
           <div><label class="form-label">FIELD</label><select class="form-input" id="myField"></select></div>
         </div>
         <div class="form-row"><label class="form-label">BIO</label><input class="form-input" id="myBio" type="text" maxlength="80" /></div>
-        <div class="form-row two">
+        <div class="form-row split">
           <div><label class="form-label">WEB</label><input class="form-input" id="myWeb" type="text" maxlength="60" /></div>
           <div><label class="form-label">SOCIAL</label><input class="form-input" id="mySocial" type="text" maxlength="60" /></div>
         </div>
