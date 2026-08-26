@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const { N, WORLD, build, assignCells, macroKeyOf, FIELDS } = require('../world-core.js');
 const getSupabase = require('../lib/supabase.js');
 const { cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed, safeRedirectBase } = require('../lib/validate.js');
+const { generateEditCode, hashEditCode } = require('../lib/editcode.js');
 
 const PRICES = { 1: '100.00', 5: '500.00', 10: '1000.00' };
 const CLAIMS_PER_IP_PER_DAY = 3;
@@ -75,6 +76,7 @@ exports.default = async (req, res) => {
     return res.status(500).json({ error: 'Could not verify identity: ' + e.message });
   }
   const redirectBase = safeRedirectBase(req);
+  const editCode = generateEditCode(); /* shown once with the checkout result */
 
   /* ---- 1. assign cells + store the pending claim FIRST (C5 race fix) ---- */
   let supa, claimId;
@@ -124,6 +126,8 @@ exports.default = async (req, res) => {
       macro: macroKey,
       image_url: imageUrl,
       status: 'pending',
+      /* edit code: issued now (hash only in DB), usable once the claim settles */
+      edit_code_hash: hashEditCode(editCode),
     }).select('id').single();
     if (insErr || !claimRow) return res.status(500).json({ error: 'Could not store the claim: ' + (insErr && insErr.message) });
     claimId = claimRow.id;
@@ -171,5 +175,9 @@ exports.default = async (req, res) => {
     return res.status(500).json({ error: 'Checkout created but could not be linked — contact support with your email.', detail: stampErr.message });
   }
 
-  return res.status(200).json({ checkout_url: session.checkout_url, checkout_id: session.checkout_id });
+  return res.status(200).json({
+    checkout_url: session.checkout_url,
+    checkout_id: session.checkout_id,
+    edit_code: editCode,
+  });
 };

@@ -1,30 +1,38 @@
 /* ==========================================================================
-   MY TURF — the email is the key to your spot (no accounts, no passwords).
-   GET  /api/my-claim?email=…          → find your settled claim(s) by email
-   POST /api/my-claim                  → owner edits their spot
-   Body: { email, prove_name*, bio?, field?, city?, project?, web?, social?, image_path? }
-   Immutable: spot cells, position, country, spots. Editable: profile fields + photo.
-
-   Security (SECURITY_AUDIT.md C1): "email only" was a full account-takeover —
-   anyone who knows a victim's email could read their IP/charge ids and rewrite
-   their card. Now: GET returns only public-map columns, and POST additionally
-   requires the exact registered name (prove_name) as proof of knowledge.
-   Real fix for production: emailed OTP / magic link.
+   MY TURF — the key to your spot (no accounts, no passwords).
+   Two ways in:
+     1. EDIT CODE (primary): POST { code: 'K7PM-X2QF' } — random code issued
+        once at claim time; only a SHA-256 hash is stored. Guesses are rate-
+        limited (5/IP/day).
+     2. Email + registered name (fallback for claims made before codes, or
+        lost codes): GET /api/my-claim?email=…, POST { email, prove_name }.
+   GET  /api/my-claim?email=…  → find your settled claim(s) by email
+   POST /api/my-claim          → unlock + edit (either key above)
+   Body: { code? | email? + prove_name?, name?, bio?, field?, city?, project?, web?, social?, image_path? }
+   Immutable: spot cells, position, country, spots, email. Editable: profile fields + photo.
+   SECURITY_AUDIT.md C1: responses are whitelisted to public-map columns —
+   ip / email / checkout_id / charge_id / edit_code_hash never leave the server.
    ========================================================================== */
 const getSupabase = require('../lib/supabase.js');
 const { FIELDS } = require('../world-core.js');
-const { cleanText, cleanClaimBody, escapeIlike, isEmail, originAllowed } = require('../lib/validate.js');
+const { cleanText, cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
+const { hashEditCode, looksLikeEditCode } = require('../lib/editcode.js');
 
 const SAFE_COLUMNS = 'id,name,bio,field,country,city,project,web,social,spots,cells,position,image_url,status,created_at';
 const SAFE_KEYS = ['id','name','bio','field','country','city','project','web','social','spots','cells','position','image_url','status','created_at'];
 const FIELD_NAMES = new Set(FIELDS.map(f => f.name));
+const CODE_ATTEMPTS_PER_IP_PER_DAY = 5;
 
-/* Whitelist-project a claim row so sensitive columns (ip, email, checkout_id,
-   charge_id) can never leak even if the table/SELECT changes. */
+/* Whitelist-project a claim row so sensitive columns can never leak even if
+   the table/SELECT changes. */
 function safeClaim(row) {
   const out = {};
   SAFE_KEYS.forEach(k => { if (row && row[k] !== undefined) out[k] = row[k]; });
   return out;
+}
+
+function todayUtcStart(){
+  return new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString();
 }
 
 async function findClaims(supa, email) {
@@ -38,32 +46,76 @@ async function findClaims(supa, email) {
   return data || [];
 }
 
+/* Look up a SETTLED claim by edit-code hash. */
+async function findByCode(supa, code) {
+  const { data, error } = await supa
+    .from('claims')
+    .select(SAFE_COLUMNS)
+    .eq('edit_code_hash', hashEditCode(code))
+    .in('status', ['paid', 'free'])
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 exports.default = async (req, res) => {
   try {
     if (req.method === 'POST' && !originAllowed(req)) {
       return res.status(403).json({ error: 'Cross-origin edits are not allowed.' });
     }
     const supa = getSupabase();
-    const rawEmail = String((req.query && req.query.email) || (req.body && req.body.email) || '').trim().toLowerCase();
-    if (!rawEmail || rawEmail.length > 120 || !isEmail(rawEmail)) {
-      return res.status(400).json({ error: 'Enter the email you claimed with.' });
+
+    /* ---------- path 1: EDIT CODE ---------- */
+    const body = req.body || {};
+    const codeRaw = String(body.code || '').trim();
+    let target = null;
+    let viaCode = false;
+
+    if (codeRaw) {
+      if (!looksLikeEditCode(codeRaw)) {
+        return res.status(400).json({ error: 'An edit code looks like K7PM-X2QF.' });
+      }
+      /* rate-limit guessing before touching the claims table (best-effort:
+         soft-fails if the auth_attempts table is absent) */
+      const ip = clientIp(req);
+      const { count: tries } = await supa
+        .from('auth_attempts')
+        .select('ip', { count: 'exact', head: true })
+        .eq('ip', ip)
+        .gte('created_at', todayUtcStart());
+      if ((tries || 0) >= CODE_ATTEMPTS_PER_IP_PER_DAY) {
+        return res.status(429).json({ error: 'Too many attempts today — use your claim email + name instead.' });
+      }
+      try { await supa.from('auth_attempts').insert({ ip }); } catch (e) { /* best-effort */ }
+
+      target = await findByCode(supa, codeRaw);
+      if (!target) {
+        return res.status(401).json({ error: 'That edit code doesn’t match any spot. Check it — K vs H, 5 vs S.' });
+      }
+      viaCode = true;
+    } else {
+      /* ---------- path 2: email (+ prove_name for edits) ---------- */
+      const rawEmail = String((req.query && req.query.email) || body.email || '').trim().toLowerCase();
+      if (!rawEmail || rawEmail.length > 120 || !isEmail(rawEmail)) {
+        return res.status(400).json({ error: 'Enter the email you claimed with — or your edit code.' });
+      }
+      const claims = await findClaims(supa, rawEmail);
+      if (!claims.length) return res.status(404).json({ error: 'No turf found for that email.' });
+
+      if (req.method === 'GET') return res.status(200).json({ claims: claims.map(safeClaim) });
+      if (req.method !== 'POST') return res.status(405).json({ error: 'GET or POST' });
+
+      target = claims[0]; /* newest claim for this email */
+      const proveName = cleanText(body.prove_name, 64);
+      if (!proveName || proveName.toLowerCase() !== String(target.name || '').toLowerCase()) {
+        return res.status(401).json({ error: 'Enter the name on the claim to confirm it’s yours.' });
+      }
     }
 
-    const claims = await findClaims(supa, rawEmail);
-    if (!claims.length) return res.status(404).json({ error: 'No turf found for that email.' });
-
-    if (req.method === 'GET') return res.status(200).json({ claims: claims.map(safeClaim) });
     if (req.method !== 'POST') return res.status(405).json({ error: 'GET or POST' });
 
-    const body = req.body || {};
-    const target = claims[0]; /* newest claim for this email */
-
-    /* proof of knowledge: the registered name must match (C1 fix) */
-    const proveName = cleanText(body.prove_name, 64);
-    if (!proveName || proveName.toLowerCase() !== String(target.name || '').toLowerCase()) {
-      return res.status(401).json({ error: 'Enter the name on the claim to confirm it’s yours.' });
-    }
-
+    /* ---------- apply the patch (shared by both paths) ---------- */
     const clean = cleanClaimBody(body);
     const patch = {};
     for (const k of ['bio', 'field', 'city', 'project', 'web', 'social']) {
@@ -95,7 +147,11 @@ exports.default = async (req, res) => {
       } catch (e) { /* ignore unreadable path */ }
     }
 
-    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to update.' });
+    /* code-auth with nothing to update = "unlock/lookup" — return the claim */
+    if (!Object.keys(patch).length) {
+      if (viaCode) return res.status(200).json({ claim: safeClaim(target) });
+      return res.status(400).json({ error: 'Nothing to update.' });
+    }
 
     const { data: updated, error } = await supa
       .from('claims').update(patch).eq('id', target.id).select(SAFE_COLUMNS).single();

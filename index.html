@@ -191,13 +191,14 @@
     <!-- VIEW: MY TURF (email is the key to your spot) -->
     <section class="dock-view" id="viewMyTurf" hidden>
       <h2 class="dock-title"><i class="fa-solid fa-key" style="color:var(--accent-orange)"></i> My Turf</h2>
-      <p class="dock-sub">Your email is the key to your spot. Enter it to find your turf and edit it.</p>
+      <p class="dock-sub">Your edit code is the key to your spot. No code? Your claim email + name works too.</p>
 
       <div id="mtFind">
         <div class="form-row">
-          <label class="form-label" for="mtEmail">YOUR CLAIM EMAIL</label>
-          <input class="form-input" id="mtEmail" type="email" placeholder="you@example.com" autocomplete="off" />
+          <label class="form-label" for="mtEmail">EDIT CODE OR CLAIM EMAIL</label>
+          <input class="form-input" id="mtEmail" type="text" placeholder="K7PM-X2QF or you@example.com" autocomplete="off" />
         </div>
+        <p class="mt-note mono" id="mtCodeHint" style="margin:2px 0 8px"></p>
         <span class="cta full" id="mtFindBtn"><p>Find my spot →</p><i class="fa-solid fa-magnifying-glass"></i></span>
       </div>
 

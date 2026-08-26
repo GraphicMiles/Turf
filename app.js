@@ -694,6 +694,7 @@ const FOUNDER_LIMIT = 200;
 let founderCount = 0;        // real claims so far (server-synced when live)
 let claimMode = 'free';      // 'free' | 'paid' | 'demo'
 let pendingCheckoutId = null;
+let pendingEditCode = null;
 let demoSeq = 490000;
 let demoPosition = 0;
 /* ---- live mode (Vercel + Supabase) vs demo mode (static preview) ---- */
@@ -995,6 +996,7 @@ async function startLiveClaim(d){
       throw err;
     }
     pendingCheckoutId = data.checkout_id;
+    pendingEditCode = data.edit_code || null;
     closeDock();
     Bachs.Checkout.open({ checkoutUrl: data.checkout_url });
   }catch(e){
@@ -1248,23 +1250,52 @@ function heartbeat(){
    ========================================================================== */
 let mtClaim = null;
 let mtNewPhoto = null;
+let mtAuthCode = null; /* set when the user unlocked their spot with an edit code */
 
 function openMyTurf(){
   mtClaim = null;
   mtNewPhoto = null;
+  mtAuthCode = null;
   document.getElementById('mtFind').hidden = false;
   document.getElementById('mtEdit').hidden = true;
   document.getElementById('mtNote').textContent = '';
   document.getElementById('mtPhoto').hidden = true;
+  /* remind the user of codes saved on this device */
+  try{
+    const saved = JSON.parse(localStorage.getItem('turf_edit_codes') || '[]');
+    const hint = document.getElementById('mtCodeHint');
+    if(hint) hint.textContent = saved.length
+      ? 'SAVED ON THIS DEVICE: ' + saved.map(s => s.code).join(' · ')
+      : 'NO EDIT CODE ON THIS DEVICE — CLAIM A SPOT TO GET ONE';
+  }catch(e){}
   document.getElementById('mtPhotoNote').textContent = '';
   openDock('myturf');
 }
 
 async function mtFind(){
-  const email = document.getElementById('mtEmail').value.trim();
-  if(!email){ showToast('Enter your claim email ✍️'); return; }
+  const raw = document.getElementById('mtEmail').value.trim();
+  if(!raw){ showToast('Enter your claim email or edit code ✍️'); return; }
   document.getElementById('mtNote').textContent = '';
   try{
+    /* edit code path (primary): POST {code} → unlocks the spot directly */
+    if(/^[A-Za-z0-9]{4}[-\s]?[A-Za-z0-9]{4}$/.test(raw)){
+      const r = await fetch('api/my-claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: raw }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if(!r.ok || !data.claim){
+        document.getElementById('mtNote').textContent = (data.error || 'THAT CODE DIDN’T MATCH ANY SPOT').toUpperCase();
+        return;
+      }
+      mtAuthCode = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      mtClaim = data.claim;
+      mtFillEdit();
+      return;
+    }
+    /* email path (fallback): GET by email */
+    const email = raw;
     const r = await fetch('api/my-claim?email=' + encodeURIComponent(email), { cache: 'no-store' });
     const data = await r.json().catch(() => ({}));
     if(!r.ok){
@@ -1310,8 +1341,6 @@ function mtFillEdit(){
 async function mtSave(){
   if(!mtClaim) return;
   const body = {
-    email: document.getElementById('mtEmail').value.trim(),
-    prove_name: mtClaim.name || '',   /* proof of ownership (SECURITY_AUDIT C1) */
     name: document.getElementById('mtName').value,
     bio: document.getElementById('mtBio').value,
     field: document.getElementById('mtField').value,
@@ -1320,12 +1349,20 @@ async function mtSave(){
     web: document.getElementById('mtWeb').value,
     social: document.getElementById('mtSocial').value,
   };
+  if(mtAuthCode){
+    body.code = mtAuthCode;                 /* primary key: the edit code */
+  }else{
+    body.email = document.getElementById('mtEmail').value.trim();
+    body.prove_name = mtClaim.name || '';   /* fallback key: email + registered name */
+  }
   try{
     if(mtNewPhoto){
+      const upBody = { name: body.name || mtClaim.name, type: 'image/webp', size: mtNewPhoto.blob.size };
+      if(mtAuthCode) upBody.code = mtAuthCode; else upBody.owner = body.email;
       const up = await fetch('api/upload-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: body.name || mtClaim.name, owner: body.email, type: 'image/webp', size: mtNewPhoto.blob.size }),
+        body: JSON.stringify(upBody),
       });
       const u = await up.json().catch(() => ({}));
       if(!up.ok || !u.uploadUrl) throw new Error(u.error || 'Photo upload unavailable');

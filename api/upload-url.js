@@ -12,6 +12,7 @@
 const crypto = require('crypto');
 const getSupabase = require('../lib/supabase.js');
 const { cleanText, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
+const { hashEditCode, looksLikeEditCode } = require('../lib/editcode.js');
 
 const MAX_BYTES = 1024 * 1024; /* client compresses to ≤512px WebP (~100–300KB) */
 const MINTS_PER_IP_PER_DAY = 12;
@@ -41,10 +42,11 @@ exports.default = async (req, res) => {
   const email = cleanText(body.email, 120).toLowerCase() ||
     (name.toLowerCase().replace(/[^a-z0-9]+/g, '.') + '@turf.local');
   const owner = cleanText(body.owner, 120).toLowerCase();
+  const code = String(body.code || '').trim();
 
   /* identity rule: don't mint uploads for data that's taken —
-     UNLESS the requester proves ownership of that data (owner email matches
-     an existing claim). Unknown owner values are ignored entirely. */
+     UNLESS the requester proves ownership: a valid edit code, or an owner
+     email that matches an existing claim. Anything else is ignored. */
   const { data: existing } = await supa
     .from('claims')
     .select('id')
@@ -54,7 +56,15 @@ exports.default = async (req, res) => {
     .maybeSingle();
   if (existing) {
     let verified = false;
-    if (owner && isEmail(owner)) {
+    if (code && looksLikeEditCode(code)) {
+      const { data: codeClaim } = await supa
+        .from('claims')
+        .select('id')
+        .eq('edit_code_hash', hashEditCode(code))
+        .limit(1)
+        .maybeSingle();
+      verified = !!codeClaim;
+    } else if (owner && isEmail(owner)) {
       const { data: ownerClaim } = await supa
         .from('claims')
         .select('id')

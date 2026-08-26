@@ -33,7 +33,12 @@ function makeSupa(state) {
       }
       return { error: null, data: null };
     }
+    if (table === 'auth_attempts') {
+      if (c._opts && c._opts.count && c._ipCheck) return { error: null, count: state.authAttempts || 0 };
+      return { error: null, data: null };
+    }
     if (table === 'claims') {
+      if (c._codeCheck && c._ms) return { error: null, data: state.codeClaim || null };
       if (c._lte) return { error: null, data: state.top20 || [] };
       if (c._opts && c._opts.count && c._ipCheck) return { error: null, count: state.ipCount || 0 };
       if (c._opts && c._opts.count) return { error: null, count: state.settledCount };
@@ -52,7 +57,7 @@ function makeSupa(state) {
     const c = {};
     c.select = (cols, opts) => { c._opts = opts; if (cols === 'country') c._countryOnly = true; return c; };
     c.in = () => c;
-    c.eq = (col) => { if (col === 'ip') c._ipCheck = true; return c; };
+    c.eq = (col) => { if (col === 'ip') c._ipCheck = true; if (col === 'edit_code_hash') c._codeCheck = true; return c; };
     c.gte = () => c;
     c.lte = () => { c._lte = true; return c; };
     c.gt = () => { c._gt = true; return c; };
@@ -81,8 +86,8 @@ function makeSupa(state) {
 }
 function freshState(extra) {
   return Object.assign({
-    settledCount: 0, ipCount: 0, rows: [], top20: [], countryRows: [], myClaims: [],
-    statValue: null, sessions: [], dupEvents: new Set(), updates: [],
+    settledCount: 0, ipCount: 0, rows: [], top20: [], countryRows: [], myClaims: [], codeClaim: null,
+    statValue: null, sessions: [], dupEvents: new Set(), updates: [], authAttempts: 0,
   }, extra || {});
 }
 const fakeRes = () => {
@@ -167,6 +172,9 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   currentSupa = makeSupa(freshState({ settledCount: 10, ipCount: 3 }));
   r = await freeClaim({ method: 'POST', body, headers: { 'x-forwarded-for': '1.2.3.4' } }, fakeRes());
   T('free-claim: 3 claims today → 429', r.code === 429 && /3 spots per IP per day/.test(r.body.error));
+  currentSupa = makeSupa(freshState({ settledCount: 199 }));
+  r = await freeClaim({ method: 'POST', body, headers: { 'x-forwarded-for': '9.9.9.9' } }, fakeRes());
+  T('free-claim: edit code issued once, hash stored (C1 fix)', r.code === 200 && /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/.test(r.body.edit_code) && /^[0-9a-f]{64}$/.test(currentSupa.state.lastInsert.edit_code_hash));
 
   /* ---------- create-checkout ---------- */
   const realFetch = global.fetch;
@@ -176,6 +184,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   r = await createCheckout({ method: 'POST', body: { ...body, spots: 5 }, headers: {} }, fakeRes());
   T('create-checkout: returns checkout_url', r.code === 200 && r.body.checkout_url.includes('checkout.bachs.io') && r.body.checkout_id === 'chk_test');
   T('create-checkout: pending claim stored with 5 cells', currentSupa.state.lastInsert && currentSupa.state.lastInsert.status === 'pending' && currentSupa.state.lastInsert.cells.length === 5);
+  T('create-checkout: edit code issued once, hash stored', /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/.test(r.body.edit_code) && /^[0-9a-f]{64}$/.test(currentSupa.state.lastInsert.edit_code_hash));
   r = await createCheckout({ method: 'POST', body: { spots: 1 }, headers: {} }, fakeRes());
   T('create-checkout: missing name → 400', r.code === 400);
   currentSupa = makeSupa(freshState({ settledCount: 250, existing: true }));
@@ -208,6 +217,27 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   currentSupa = makeSupa(freshState({ myClaims: [claimRow], existing: true }));
   r = await myClaim({ method: 'POST', body: { email: 'raji@x.com', prove_name: 'Raji', name: 'SomeoneElse' } }, fakeRes());
   T('my-claim POST: name clash → 409', r.code === 409);
+
+  /* ---------- my-claim via EDIT CODE (primary key) ---------- */
+  const V = require(path.join(ROOT, 'lib/editcode.js'));
+  T('editcode: normalize+hash deterministic, hex', V.hashEditCode('k7pm x2qf') === V.hashEditCode('K7PM-X2QF') && /^[0-9a-f]{64}$/.test(V.hashEditCode('AAAA-2222')));
+  T('editcode: generated shape XXXX-XXXX, unambiguous chars', /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/.test(V.generateEditCode()));
+  const goodCode = 'ABCD-2345';
+  const codeRow = Object.assign({}, claimRow, { id: 'cl_code', edit_code_hash: V.hashEditCode(goodCode) });
+  currentSupa = makeSupa(freshState({ codeClaim: codeRow, myClaims: [codeRow] }));
+  r = await myClaim({ method: 'POST', body: { code: goodCode } }, fakeRes());
+  T('my-claim code: valid code unlocks (no patch → claim)', r.code === 200 && r.body.claim && r.body.claim.id === 'cl_code');
+  T('my-claim code: no email/ip/hash leak', r.body.claim.email === undefined && r.body.claim.ip === undefined && r.body.claim.edit_code_hash === undefined);
+  currentSupa = makeSupa(freshState({ codeClaim: codeRow, myClaims: [codeRow] }));
+  r = await myClaim({ method: 'POST', body: { code: 'abcd 2345', bio: 'edited by code' } }, fakeRes());
+  T('my-claim code: sloppy input + edit applies (200, claim returned)', r.code === 200 && r.body.claim && r.body.claim.id === 'cl_code');  currentSupa = makeSupa(freshState({}));
+  r = await myClaim({ method: 'POST', body: { code: 'WRNG-CODE' } }, fakeRes());
+  T('my-claim code: wrong code → 401', r.code === 401);
+  currentSupa = makeSupa(freshState({ authAttempts: 5 }));
+  r = await myClaim({ method: 'POST', body: { code: goodCode } }, fakeRes());
+  T('my-claim code: 5 attempts today → 429', r.code === 429);
+  r = await myClaim({ method: 'POST', body: { code: 'nope' } }, fakeRes());
+  T('my-claim code: bad shape → 400', r.code === 400);
 
   /* ---------- security regressions (SECURITY_AUDIT.md) ---------- */
   const { cleanText, escapeIlike, isEmail } = require(path.join(ROOT, 'lib/validate.js'));
@@ -242,6 +272,9 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('upload-url: duplicate identity → 409', r.code === 409);
   r = await uploadUrl({ method: 'POST', body: { name: 'Raji', owner: 'raji@x.com', type: 'image/webp', size: 1000 }, headers: {} }, fakeRes());
   T('upload-url: verified owner (email matches a claim) → 200', r.code === 200);
+  currentSupa = makeSupa(freshState({ existing: true, codeClaim: { id: 'cl_code' } }));
+  r = await uploadUrl({ method: 'POST', body: { name: 'Raji', code: 'ABCD-2345', type: 'image/webp', size: 1000 }, headers: {} }, fakeRes());
+  T('upload-url: valid edit code verifies owner → 200', r.code === 200);
 
   /* ---------- live stats: visit + heartbeat + summary ---------- */
   const visit = req_('api/visit.js');

@@ -226,3 +226,21 @@ $$;
 grant execute on function public.bump_stat(text) to service_role;
 grant execute on function public.insert_claim_sequential(jsonb, boolean) to service_role;
 grant execute on function public.settle_claim(text, text) to service_role;
+
+-- ============================================================================
+-- EDIT CODES (SECURITY_AUDIT.md C1 follow-up) — "the key to your spot"
+-- A random 8-char code (e.g. K7PM-X2QF) is issued ONCE at claim time; only
+-- this SHA-256 hash is stored. /api/my-claim accepts the code as the primary
+-- way to edit a spot (email + registered name remains the fallback).
+-- Guesses are rate-limited to 5/IP/day via auth_attempts.
+-- ============================================================================
+alter table public.claims add column if not exists edit_code_hash text;
+create index if not exists claims_edit_code_idx on public.claims (edit_code_hash);
+
+create table if not exists public.auth_attempts (
+  id         bigint generated always as identity primary key,
+  ip         text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists auth_attempts_ip_day_idx on public.auth_attempts (ip, created_at);
+alter table public.auth_attempts enable row level security;

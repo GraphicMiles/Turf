@@ -8,6 +8,7 @@
 const { N, WORLD, build, assignCells, macroKeyOf, FIELDS } = require('../world-core.js');
 const getSupabase = require('../lib/supabase.js');
 const { cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
+const { generateEditCode, hashEditCode } = require('../lib/editcode.js');
 
 const FOUNDER_LIMIT = 200;
 const CLAIMS_PER_IP_PER_DAY = 3;
@@ -137,6 +138,8 @@ exports.default = async (req, res) => {
     } catch (e) { /* ignore unreadable path */ }
   }
 
+  /* edit code: generated here, returned ONCE, only the hash is stored */
+  const editCode = generateEditCode();
   const row = {
     name,
     bio: body.bio || null,
@@ -153,6 +156,7 @@ exports.default = async (req, res) => {
     macro: macroKey,
     image_url: imageUrl,
     status: 'free',
+    edit_code_hash: hashEditCode(editCode),
   };
 
   const result = await insertClaim(supa, row, true);
@@ -161,6 +165,7 @@ exports.default = async (req, res) => {
     const taken = /already on the map/.test(result.error);
     return res.status(taken ? 409 : 500).json({ error: result.error });
   }
-  /* legacy path stores position inside insertClaim; rpc path returns it */
-  return res.status(200).json(result.claim);
+  /* legacy path stores position inside insertClaim; rpc path returns it.
+     edit_code (plaintext) appears exactly once — right here. */
+  return res.status(200).json(Object.assign({}, result.claim, { edit_code: editCode }));
 };
