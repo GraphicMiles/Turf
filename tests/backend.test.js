@@ -140,7 +140,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('assignCells: 5 unique unused cells (run or scatter)', c5u.length === 5 && new Set(c5u).size === 5 && c5u.every(v => !used.has(v)));
 
   /* ---------- webhook: signature + position ---------- */
-  const webhook = req_('api/webhooks/bachs.js');
+  const webhook = req_('functions/bachs.js');
   const sign = (raw, ts) => crypto.createHmac('sha256', 'test_secret').update(ts + '.' + raw).digest('hex');
   currentSupa = makeSupa(freshState({ settledCount: 5 }));
   const ts = String(Math.floor(Date.now() / 1000));
@@ -162,7 +162,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('webhook: collection.failed → 200', r.code === 200);
 
   /* ---------- claim-mode (founder tier) ---------- */
-  const claimMode = req_('api/claim-mode.js');
+  const claimMode = req_('functions/claim-mode.js');
   currentSupa = makeSupa(freshState({ settledCount: 199 }));
   r = await claimMode({ method: 'GET' }, fakeRes());
   T('claim-mode: 199 → free, 1 left', r.code === 200 && r.body.mode === 'free' && r.body.freeRemaining === 1);
@@ -171,7 +171,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('claim-mode: 200 → paid, 0 left', r.code === 200 && r.body.mode === 'paid' && r.body.freeRemaining === 0);
 
   /* ---------- free-claim ---------- */
-  const freeClaim = req_('api/free-claim.js');
+  const freeClaim = req_('functions/free-claim.js');
   const body = { name: 'Raji', field: 'Music', country: 'NGA', city: 'Lagos', project: 'EP', spots: 1 };
   currentSupa = makeSupa(freshState({ settledCount: 199 }));
   r = await freeClaim({ method: 'POST', body, headers: { 'x-forwarded-for': '9.9.9.9' } }, fakeRes());
@@ -197,7 +197,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   /* ---------- create-checkout ---------- */
   const realFetch = global.fetch;
   global.fetch = async () => ({ ok: true, json: async () => ({ checkout_id: 'chk_test', checkout_url: 'https://checkout.bachs.io/c/test', status: 'open' }) });
-  const createCheckout = req_('api/create-checkout.js');
+  const createCheckout = req_('functions/create-checkout.js');
   currentSupa = makeSupa(freshState({ settledCount: 250 }));
   r = await createCheckout({ method: 'POST', body: { ...body, spots: 5 }, headers: {} }, fakeRes());
   T('create-checkout: returns checkout_url', r.code === 200 && r.body.checkout_url.includes('checkout.bachs.io') && r.body.checkout_id === 'chk_test');
@@ -214,7 +214,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   global.fetch = realFetch;
 
   /* ---------- my-claim (email is the key + prove_name) ---------- */
-  const myClaim = req_('api/my-claim.js');
+  const myClaim = req_('functions/my-claim.js');
   const claimRow = { id: 'cl_1', name: 'Raji', email: 'raji@x.com', bio: 'old', status: 'free', position: 1, cells: [1555], country: 'NGA', ip: '5.6.7.8', charge_id: 'ch_x', checkout_id: 'chk_x' };
   currentSupa = makeSupa(freshState({ myClaims: [claimRow] }));
   r = await myClaim({ method: 'GET', query: { email: 'RAJI@X.com' } }, fakeRes());
@@ -275,7 +275,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('free-claim: invalid email → 400', r.code === 400);
 
   /* ---------- upload-url ---------- */
-  const uploadUrl = req_('api/upload-url.js');
+  const uploadUrl = req_('functions/upload-url.js');
   currentSupa = makeSupa(freshState({ settledCount: 5 }));
   r = await uploadUrl({ method: 'POST', body: { name: 'Raji', type: 'image/webp', size: 200000 }, headers: {} }, fakeRes());
   T('upload-url: 200 + signed url + uuid path', r.code === 200 && typeof r.body.uploadUrl === 'string' && /^[0-9a-f-]{36}\.webp$/.test(r.body.path));
@@ -299,7 +299,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('ladder: base 100, overtake 2×, validAmount bounds', L.basePrice() === 100 && L.overtakePrice(500) === 1000 && L.validAmount(100) === true && L.validAmount(99) === false && L.validAmount(10000001) === false);
   T('ladder: previewRank sorts by amount paid', L.previewRank([{ amount: 5000 }, { amount: 1000 }, { amount: 100 }], 2000, Date.now()) === 2 && L.previewRank([{ amount: 5000 }, { amount: 1000 }, { amount: 100 }], 9999, Date.now()) === 1);
 
-  const ladderCheckout = req_('api/ladder-checkout.js');
+  const ladderCheckout = req_('functions/ladder-checkout.js');
   global.fetch = async () => ({ ok: true, json: async () => ({ checkout_id: 'chk_l1', checkout_url: 'https://checkout.bachs.io/c/l1' }) });
   currentSupa = makeSupa(freshState());
   r = await ladderCheckout({ method: 'POST', body: { name: 'Big Spender', field: 'Music', country: 'NGA', amount: 2000 }, headers: {} }, fakeRes());
@@ -318,7 +318,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('ladder-checkout: duplicate identity → 409', r.code === 409);
   global.fetch = realFetch;
 
-  const ladderView = req_('api/ladder.js');
+  const ladderView = req_('functions/ladder.js');
   currentSupa = makeSupa(freshState({ ladderRows: [{ claim_id: 'cl_a', amount: 5000, paid_at: '2026-08-26T00:00:00Z', claims: { name: 'Raji', country: 'NGA' } }] }));
   r = await ladderView({ method: 'GET', query: {} }, fakeRes());
   T('ladder view: rows via REST fallback, rank 1 = biggest payer', r.code === 200 && r.body.rows.length === 1 && r.body.rows[0].rank === 1 && r.body.rows[0].holder.name === 'Raji' && r.body.rows[0].amount === 5000);
@@ -327,7 +327,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('ladder view: meta (taken, basePrice)', r.code === 200 && r.body.taken === 7 && r.body.basePrice === 100 && r.body.firstSpotFree === false);
 
   /* ---------- spot posts (media feed) ---------- */
-  const spotPost = req_('api/spot-post.js');
+  const spotPost = req_('functions/spot-post.js');
   currentSupa = makeSupa(freshState({ codeClaim: { id: '11111111-2222-3333-4444-555555555555', name: 'Raji', status: 'free' }, statObj: { id: 'obj' } }));
   r = await spotPost({ method: 'POST', body: { code: 'ABCD-2345', kind: 'video', path: '11111111-2222-3333-4444-555555555555.mp4', caption: '<b>hi</b>' } }, fakeRes());
   T('spot-post: code auth + video stored, caption cleaned', r.code === 200 && currentSupa.state.lastPost.kind === 'video' && !/[<>]/.test(currentSupa.state.lastPost.caption || '') && currentSupa.state.lastPost.claim_id === '11111111-2222-3333-4444-555555555555');
@@ -352,8 +352,8 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
 
 
   /* ---------- live stats: visit + heartbeat + summary ---------- */
-  const visit = req_('api/visit.js');
-  const heartbeat = req_('api/heartbeat.js');
+  const visit = req_('functions/visit.js');
+  const heartbeat = req_('functions/heartbeat.js');
   currentSupa = makeSupa(freshState());
   r = await visit({ method: 'POST', body: {} }, fakeRes());
   T('visit: 200 + increments counter', r.code === 200 && r.body.ok === true);
@@ -365,7 +365,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   r = await heartbeat({ method: 'POST', body: { session: 'bad' } }, fakeRes());
   T('heartbeat: bad session → 400', r.code === 400);
 
-  const summary = req_('api/summary.js');
+  const summary = req_('functions/summary.js');
   currentSupa = makeSupa(freshState({
     settledCount: 250,
     countryRows: [{ country: 'NGA' }, { country: 'NGA' }, { country: 'JPN' }],
@@ -377,7 +377,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   T('summary: visits + online + launchIso', r.body.totalVisits === 1234 && r.body.onlineNow === 2 && typeof r.body.launchIso === 'string');
 
   /* ---------- worldmap (PNG) ---------- */
-  const worldmap = req_('api/worldmap.js');
+  const worldmap = req_('functions/worldmap.js');
   currentSupa = makeSupa(freshState({ settledCount: 1, rows: [{ cells: [5450], field: 'Music' }] }));
   r = await worldmap({ method: 'GET' }, fakeRes());
   const b = Buffer.isBuffer(r.body) ? r.body : Buffer.from(r.body || []);
@@ -399,7 +399,7 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   }
 
   /* ---------- claims?macro ---------- */
-  const claims = req_('api/claims.js');
+  const claims = req_('functions/claims.js');
   currentSupa = makeSupa(freshState({ settledCount: 1, rows: [{ name: 'Raji', cells: [1555], macro: '4-7' }] }));
   r = await claims({ method: 'GET', query: { macro: '4-7' } }, fakeRes());
   T('claims?macro: 200 + array', r.code === 200 && Array.isArray(r.body));

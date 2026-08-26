@@ -12,7 +12,7 @@
    silently dropped — "customer paid, no claim" is now recoverable.
    ========================================================================== */
 const crypto = require('crypto');
-const getSupabase = require('../../lib/supabase.js');
+const getSupabase = require('../lib/supabase.js');
 
 function verifySignature(rawBody, secret, tsHeader, sigHeader, toleranceSec = 300) {
   if (!tsHeader || !sigHeader) return false;
