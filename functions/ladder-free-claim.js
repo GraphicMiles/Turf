@@ -9,6 +9,8 @@
    Returns: { claim, edit_code, entry_amount }  (edit code shown ONCE)
    ========================================================================== */
 const getSupabase = require('../lib/supabase.js');
+
+const { objectUrl } = require('../lib/storage.js');
 const { FIELDS, WORLD } = require('../world-core.js');
 const { cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
 const { generateEditCode, hashEditCode } = require('../lib/editcode.js');
@@ -77,10 +79,7 @@ exports.default = async (req, res) => {
   let imageUrl = null;
   const imagePath = String(raw.image_path || '');
   if (/^[0-9a-f-]{36}\.(webp|gif)$/i.test(imagePath)) {
-    try {
-      const { data: obj, error: statErr } = await supa.storage.from('people').stat(imagePath);
-      if (!statErr && obj) imageUrl = supa.storage.from('people').getPublicUrl(imagePath).data.publicUrl;
-    } catch (e) { /* ignore */ }
+    imageUrl = await objectUrl(supa, imagePath); /* may be null — claim proceeds without photo */
   }
 
   const editCode = generateEditCode();

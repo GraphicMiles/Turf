@@ -13,6 +13,8 @@
 const crypto = require('crypto');
 const { N, WORLD, build, assignCells, macroKeyOf, FIELDS } = require('../world-core.js');
 const getSupabase = require('../lib/supabase.js');
+
+const { objectUrl } = require('../lib/storage.js');
 const { cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed, safeRedirectBase } = require('../lib/validate.js');
 const { generateEditCode, hashEditCode } = require('../lib/editcode.js');
 
@@ -104,10 +106,7 @@ exports.default = async (req, res) => {
     let imageUrl = null;
     const imagePath = String(raw.image_path || '');
     if (/^[0-9a-f-]{36}\.webp$/.test(imagePath)) {
-      try {
-        const { data: obj, error: statErr } = await supa.storage.from('people').stat(imagePath);
-        if (!statErr && obj) imageUrl = supa.storage.from('people').getPublicUrl(imagePath).data.publicUrl;
-      } catch (e) { /* ignore unreadable path */ }
+      imageUrl = await objectUrl(supa, imagePath); /* may be null — claim proceeds without photo */
     }
 
     const { data: claimRow, error: insErr } = await supa.from('claims').insert({

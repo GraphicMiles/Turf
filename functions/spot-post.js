@@ -10,6 +10,7 @@
 const getSupabase = require('../lib/supabase.js');
 const { cleanText, isEmail, originAllowed } = require('../lib/validate.js');
 const { hashEditCode, looksLikeEditCode } = require('../lib/editcode.js');
+const { objectUrl } = require('../lib/storage.js');
 
 const KINDS = { image: /\.(webp|jpg|png)$/i, gif: /\.gif$/i, video: /\.(mp4|webm|mov)$/i, audio: /\.(mp3|m4a|wav|ogg|aac)$/i };
 const MAX_POSTS_PER_CLAIM = 60;
@@ -95,10 +96,11 @@ exports.default = async (req, res) => {
       return res.status(429).json({ error: 'Feed is full — remove an older post first.' });
     }
 
-    const { data: obj, error: statErr } = await supa.storage.from('people').stat(path);
-    if (statErr || !obj) return res.status(400).json({ error: 'Upload not found — try again.' });
+    /* the object must exist before we publish it (real storage-js has no
+       .stat() — existence check via list+search in lib/storage.js) */
+    const url = await objectUrl(supa, path);
+    if (!url) return res.status(400).json({ error: 'Upload not found — try again.' });
 
-    const url = supa.storage.from('people').getPublicUrl(path).data.publicUrl;
     const { data: post, error } = await supa.from('spot_posts').insert({
       claim_id: target.id,
       kind,

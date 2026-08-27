@@ -62,6 +62,58 @@
     $('codeModal').classList.add('open');
   }
 
+  /* ---------------- debug panel: log every fetch + JS error ----------------
+     Copy the report and paste it back when something misbehaves — it shows
+     every API call, status, timing and response body (first 300 chars). */
+  const DBG = { calls: [], errors: [], open: false };
+  const dbgAdd = (entry) => {
+    DBG.calls.unshift(entry);
+    if (DBG.calls.length > 40) DBG.calls.pop();
+    if (DBG.open) dbgRender();
+  };
+  function dbgRender() {
+    const list = $('dbgList');
+    if (!list) return;
+    $('dbgMode').textContent = '· ' + (meta.mode || '?') + (meta.mode === 'free' ? ' (' + (meta.freeRemaining || 0) + ' FREE)' : '');
+    list.innerHTML =
+      DBG.errors.map(e => '<div class="dbg-row dbg-err mono">✖ ' + esc(String(e).slice(0, 180)) + '</div>').join('') +
+      DBG.calls.map(c => '<div class="dbg-row mono dbg-' + (c.ok ? 'ok' : 'bad') + '">' +
+        (c.ok ? '✔' : '✖') + ' ' + esc(c.method + ' ' + c.url).slice(0, 90) +
+        ' → ' + c.status + ' · ' + c.ms + 'ms' +
+        (c.body ? '<div class="dbg-body mono">' + esc(String(c.body).slice(0, 300)) + '</div>' : '') +
+        (c.err ? '<div class="dbg-body mono">' + esc(String(c.err).slice(0, 300)) + '</div>' : '') +
+        '</div>').join('');
+  }
+  function dbgReport() {
+    return JSON.stringify({
+      at: new Date().toISOString(), href: String(location.href),
+      mode: meta, calls: DBG.calls, errors: DBG.errors,
+    }, null, 1);
+  }
+  const _fetch = window.fetch && window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+    const method = (init && init.method) || (input && input.method) || 'GET';
+    const t0 = Date.now();
+    if (!_fetch) return Promise.reject(new Error('no fetch'));
+    return _fetch(input, init).then(r => {
+      const entry = { method, url, status: r.status, ms: Date.now() - t0, ok: r.status < 400 };
+      dbgAdd(entry);
+      /* capture response bodies for our API + storage PUTs (best-effort) */
+      try {
+        if (/api\/|supabase|storage/.test(url) && r.body) {
+          r.clone().text().then(t => { entry.body = t.slice(0, 300); if (DBG.open) dbgRender(); }).catch(() => {});
+        }
+      } catch (e) { /* clone unsupported — status is enough */ }
+      return r;
+    }, e => {
+      dbgAdd({ method, url, status: 0, ms: Date.now() - t0, ok: false, err: (e && e.message) || 'network error' });
+      throw e;
+    });
+  };
+  window.addEventListener('error', e => { DBG.errors.unshift((e && e.message) || 'error'); if (DBG.open) dbgRender(); });
+  window.addEventListener('unhandledrejection', e => { DBG.errors.unshift('promise: ' + ((e && e.reason && e.reason.message) || e && e.reason || '')); if (DBG.open) dbgRender(); });
+
   function showToast(message) {
     const c = document.getElementById('toastContainer');
     if (!c) return;
@@ -80,6 +132,7 @@
   let myAuth = null;        /* {code} or {email, name} */
   let myClaim = null;
   let myLadder = null;      /* {amount, rank} from my-claim responses */
+  let payoutInfo = null;    /* {owed_total, payouts[], receipt} from ladder-payout */
   let selected = null;
   let backendError = null;
 
@@ -444,6 +497,52 @@
     $('myField').innerHTML = (FIELDS.length ? FIELDS : [{ name: 'Builder' }]).map(f =>
       '<option' + (f.name === c.field ? ' selected' : '') + '>' + esc(f.name) + '</option>').join('');
     loadMyFeed();
+    loadPayout();
+  }
+
+  /* ---------------- overtake earnings (50% revenue share) ---------------- */
+  async function loadPayout() {
+    if (!myAuth) return;
+    payoutInfo = null;
+    try {
+      const q = myAuth.code
+        ? ('?code=' + encodeURIComponent(myAuth.code))
+        : ('?email=' + encodeURIComponent(myAuth.email) + '&prove_name=' + encodeURIComponent(myAuth.name));
+      const r = await fetch('api/ladder-payout' + q, { cache: 'no-store' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      payoutInfo = d;
+      const owed = d.owed_total || 0;
+      const done = (d.payouts || []).filter(p => p.status !== 'owed').reduce((a, p) => a + (p.amount_ngn || 0), 0);
+      $('myPayoutAmt').textContent = naira(owed);
+      $('myPayoutSub').textContent = owed > 0
+        ? 'Someone paid 2× to overtake you — half of it is yours. Claim it below.'
+        : (done > 0 ? naira(done) + ' already claimed. New takeovers land here automatically.' :
+          'When someone pays 2× to overtake you, half their money lands here.');
+      $('myPayoutBtn').style.display = owed > 0 ? '' : 'none';
+      if (d.receipt) {
+        const when = d.receipt.date ? new Date(d.receipt.date).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+        $('myReceipt').textContent = 'RECEIPT · ' + naira(d.receipt.paid) + ' PAID ' + when + ' · REF ' + d.receipt.ref + ' — THIS IS YOUR PROOF OF THE SPOT';
+      }
+    } catch (e) {
+      $('myPayoutAmt').textContent = '₦?';
+      $('myPayoutSub').textContent = 'Earnings unavailable (' + e.message + ').';
+      $('myPayoutBtn').style.display = 'none';
+    }
+  }
+
+  async function claimPayout() {
+    if (!myAuth || !payoutInfo || !(payoutInfo.owed_total > 0)) return;
+    const dest = $('myPayoutDest').value.trim();
+    if (!dest) { showToast('Enter the email the money should land in 📧'); return; }
+    const body = Object.assign({ destination: dest }, authBody());
+    try {
+      const r = await fetch('api/ladder-payout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'failed');
+      showToast('Claimed ' + naira(d.claimed_total) + ' → ' + d.destination + ' 💸 (payout within 24h)');
+      loadPayout();
+    } catch (e) { showToast(e.message); }
   }
 
   async function loadMyFeed() {
@@ -596,13 +695,24 @@
     $('btnMySpot').onclick = openMy;
     $('myFindBtn').onclick = myFind;
     $('mySave').onclick = mySave;
+    $('myPayoutBtn').onclick = claimPayout;
     $('myPost').onclick = postMedia;
     $('myKey').addEventListener('input', () => {
       const raw = $('myKey').value.trim();
       $('myProveRow').hidden = /^[A-Za-z0-9]{4}[-\s]?[A-Za-z0-9]{4}$/.test(raw) || !raw.includes('@');
     });
     $('btnMore').onclick = () => loadLadder(true);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('dock').classList.remove('open'); $('claimModal').classList.remove('open'); $('myModal').classList.remove('open'); $('codeModal').classList.remove('open'); } });
+    $('dbgFab').onclick = () => { DBG.open = true; $('dbgPanel').hidden = false; dbgRender(); };
+    $('dbgClose').onclick = () => { DBG.open = false; $('dbgPanel').hidden = true; };
+    $('dbgClear').onclick = () => { DBG.calls = []; DBG.errors = []; dbgRender(); };
+    $('dbgCopy').onclick = async () => {
+      try { await navigator.clipboard.writeText(dbgReport()); showToast('Debug report copied — send it to us 📋'); }
+      catch (e) { showToast('Copy blocked — type __TURF_DBG() in the console'); }
+    };
+    document.addEventListener('keydown', e => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) { e.preventDefault(); $('dbgFab').click(); }
+      if (e.key === 'Escape') { $('dock').classList.remove('open'); $('claimModal').classList.remove('open'); $('myModal').classList.remove('open'); $('codeModal').classList.remove('open'); }
+    });
 
     try {
       const p = new URLSearchParams(window.location.search);

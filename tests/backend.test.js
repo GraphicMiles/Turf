@@ -54,6 +54,10 @@ function makeSupa(state) {
       if (c._insert) { state.lastPost = c._insert; return { error: null, data: Object.assign({ id: 'post_x' }, c._insert) }; }
       return { error: null, data: state.posts || [] };
     }
+    if (table === 'ladder_payouts') {
+      if (c._update) { state.payoutUpdate = c._update; return { error: null, data: (state.payouts || []).filter(p => p.status === 'owed') }; }
+      return { error: null, data: state.payouts || [] };
+    }
     if (table === 'claims') {
       if (c._codeCheck && c._ms) return { error: null, data: state.codeClaim || null };
       if (c._lte) return { error: null, data: state.top20 || [] };
@@ -94,7 +98,13 @@ function makeSupa(state) {
   }
   const storage = {
     from: () => ({
-      stat: async () => ({ data: state.statObj || null, error: null }),
+      /* mirrors REAL @supabase/storage-js: NO .stat() — existence via list() */
+      list: async (folder, opts) => ({
+        error: null,
+        data: state.storageObjects
+          ? state.storageObjects.filter(o => o.name.indexOf((opts && opts.search) || '') === 0).slice(0, (opts && opts.limit) || 100)
+          : [],
+      }),
       getPublicUrl: p => ({ data: { publicUrl: 'https://cdn.example/people/' + p } }),
       createSignedUploadUrl: async p => ({ data: { signedUrl: 'https://cdn.example/upload?path=' + p, token: 't', path: p }, error: null }),
     }),
@@ -336,6 +346,9 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   currentSupa = makeSupa(freshState({ ladderCount: 5 }));
   r = await ladderFree({ method: 'POST', body: { name: 'Founder One', field: 'Music', country: 'NGA' }, headers: {} }, fakeRes());
   T('ladder-free-claim: 200, claim free, entry ₦100, edit code once', r.code === 200 && r.body.claim && currentSupa.state.lastInsert.status === 'free' && currentSupa.state.lastEntry.amount === 100 && currentSupa.state.lastEntry.claim_id === 'claim_x' && /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/.test(r.body.edit_code));
+  currentSupa = makeSupa(freshState({ ladderCount: 5, storageObjects: [{ name: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.webp' }] }));
+  r = await ladderFree({ method: 'POST', body: { name: 'Founder Two', field: 'Music', country: 'NGA', image_path: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.webp' }, headers: {} }, fakeRes());
+  T('ladder-free-claim: photo verified via list() → image_url stored', r.code === 200 && currentSupa.state.lastInsert.image_url === 'https://cdn.example/people/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.webp');
   currentSupa = makeSupa(freshState({ ladderCount: 200 }));
   r = await ladderFree({ method: 'POST', body: { name: 'Late One', country: 'NGA' }, headers: {} }, fakeRes());
   T('ladder-free-claim: tier full → 402 paid mode', r.code === 402 && r.body.mode === 'paid');
@@ -348,11 +361,14 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
 
   /* ---------- spot posts (media feed) ---------- */
   const spotPost = req_('functions/spot-post.js');
-  currentSupa = makeSupa(freshState({ codeClaim: { id: '11111111-2222-3333-4444-555555555555', name: 'Raji', status: 'free' }, statObj: { id: 'obj' } }));
+  currentSupa = makeSupa(freshState({ codeClaim: { id: '11111111-2222-3333-4444-555555555555', name: 'Raji', status: 'free' }, storageObjects: [{ name: '11111111-2222-3333-4444-555555555555.mp4' }] }));
   r = await spotPost({ method: 'POST', body: { code: 'ABCD-2345', kind: 'video', path: '11111111-2222-3333-4444-555555555555.mp4', caption: '<b>hi</b>' } }, fakeRes());
   T('spot-post: code auth + video stored, caption cleaned', r.code === 200 && currentSupa.state.lastPost.kind === 'video' && !/[<>]/.test(currentSupa.state.lastPost.caption || '') && currentSupa.state.lastPost.claim_id === '11111111-2222-3333-4444-555555555555');
   r = await spotPost({ method: 'POST', body: { code: 'ABCD-2345', kind: 'image', path: '11111111-2222-3333-4444-555555555555.mp4' } }, fakeRes());
   T('spot-post: kind/path mismatch → 400', r.code === 400);
+  currentSupa = makeSupa(freshState({ codeClaim: { id: '11111111-2222-3333-4444-555555555555', name: 'Raji', status: 'free' } }));
+  r = await spotPost({ method: 'POST', body: { code: 'ABCD-2345', kind: 'image', path: '11111111-2222-3333-4444-555555555555.webp' } }, fakeRes());
+  T('spot-post: object never uploaded → 400 (real storage surface, no .stat)', r.code === 400 && /not found/i.test(r.body.error));
   r = await spotPost({ method: 'GET', query: { claim_id: '11111111-2222-3333-4444-555555555555' } }, fakeRes());
   T('spot-post: public feed list', r.code === 200 && Array.isArray(r.body.posts));
 
@@ -370,6 +386,28 @@ const T = (n, ok) => { if (ok) { pass++; console.log('PASS  ' + n); } else { fai
   r = await uploadUrl({ method: 'POST', body: { name: 'Raji', kind: 'video', type: 'text/html', size: 1000 }, headers: {} }, fakeRes());
   T('upload-url: html disguised as video → 415', r.code === 415);
 
+
+  /* ---------- ladder payouts (50% overtake revenue share) ---------- */
+  const ladderPayout = req_('functions/ladder-payout.js');
+  currentSupa = makeSupa(freshState({
+    codeClaim: { id: '11111111-2222-3333-4444-555555555555', name: 'Raji', status: 'free', checkout_id: 'chk_abcd1234', created_at: '2026-08-20T10:00:00Z' },
+    ladderTarget: { amount: 5000, paid_at: '2026-08-21T10:00:00Z' },
+    payouts: [{ amount_ngn: 4000, status: 'owed', ref: 'chk_take999' }, { amount_ngn: 1000, status: 'claimed', ref: 'chk_take111' }],
+  }));
+  r = await ladderPayout({ method: 'GET', query: { code: 'ABCD-2345' } }, fakeRes());
+  T('ladder-payout: GET → owed 4000 only + receipt proof', r.code === 200 && r.body.owed_total === 4000 && r.body.payouts.length === 2 && r.body.receipt.paid === 5000 && /ABCD1234/i.test(r.body.receipt.ref));
+  currentSupa = makeSupa(freshState({ codeClaim: null }));
+  r = await ladderPayout({ method: 'GET', query: { code: 'ABCD-2345' } }, fakeRes());
+  T('ladder-payout: unknown code → 401', r.code === 401);
+  currentSupa = makeSupa(freshState({ codeClaim: { id: 'c1', name: 'Raji', status: 'free' }, payouts: [{ amount_ngn: 4000, status: 'owed', ref: 'x' }] }));
+  r = await ladderPayout({ method: 'POST', body: { code: 'ABCD-2345', destination: 'not-an-email' }, headers: {} }, fakeRes());
+  T('ladder-payout: bad destination → 400', r.code === 400);
+  currentSupa = makeSupa(freshState({ codeClaim: { id: 'c1', name: 'Raji', status: 'free' }, payouts: [] }));
+  r = await ladderPayout({ method: 'POST', body: { code: 'ABCD-2345', destination: 'raji@x.io' }, headers: {} }, fakeRes());
+  T('ladder-payout: nothing owed → 409', r.code === 409);
+  currentSupa = makeSupa(freshState({ codeClaim: { id: 'c1', name: 'Raji', status: 'free' }, payouts: [{ amount_ngn: 4000, status: 'owed', ref: 'x' }, { amount_ngn: 6000, status: 'owed', ref: 'y' }] }));
+  r = await ladderPayout({ method: 'POST', body: { code: 'ABCD-2345', destination: 'raji@x.io' }, headers: {} }, fakeRes());
+  T('ladder-payout: claim all owed → 10,000 + marked claimed', r.code === 200 && r.body.claimed_total === 10000 && currentSupa.state.payoutUpdate.status === 'claimed' && currentSupa.state.payoutUpdate.destination === 'raji@x.io');
 
   /* ---------- live stats: visit + heartbeat + summary ---------- */
   const visit = req_('functions/visit.js');

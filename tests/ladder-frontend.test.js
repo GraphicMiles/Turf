@@ -22,6 +22,7 @@ const LADDER_ROWS = {
 const META = { taken: 2, basePrice: 100, rowSize: 20, firstSpotFree: false, mode: 'free', freeRemaining: 198, founderLimit: 200, recent: [{ action: 'overtake', amount: 20000, name: 'Ada' }], lockedTargets: ['c2'] };
 const POSTS = { posts: [{ id: 'p1', kind: 'video', url: 'https://dummy.supabase.co/people/x.mp4', caption: 'my launch', created_at: '2026-08-26T00:00:00Z' }] };
 const CLAIM_BY_CODE = { claim: { id: 'c1', name: 'Ada', field: 'Music', country: 'NGA', city: 'Lagos', status: 'paid', cells: [] }, ladder: { amount: 20000, rank: 1 } };
+const PAYOUT = { owed_total: 500, payouts: [{ amount_ngn: 1000, status: 'claimed', ref: '…TAKE999', created_at: '2026-08-26T00:00:00Z' }], receipt: { name: 'Ada', paid: 5000, date: '2026-08-20T10:00:00Z', ref: '…ABCD1234' } };
 
 const vc = new VirtualConsole();
 const errors = [];
@@ -31,12 +32,13 @@ const dom = new JSDOM(html, {
   runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole: vc, url: 'http://localhost/',
   beforeParse(window) {
     window.fetch = async (url) => ({
-      ok: true,
+      ok: true, status: 200, clone: () => ({ text: async () => '' }),
       json: async () => {
         if (String(url).indexOf('meta=1') >= 0) return META;
         if (String(url).indexOf('api/spot-post') >= 0) return POSTS;
         if (String(url).indexOf('api/my-claim') >= 0) return CLAIM_BY_CODE;
         if (String(url).indexOf('api/upload-url') >= 0) return { uploadUrl: 'https://dummy.supabase.co/storage/v1/object/upload/signature/people/x.webp', path: '11111111-1111-4111-8111-111111111111.webp' };
+        if (String(url).indexOf('api/ladder-payout') >= 0) return PAYOUT;
         if (String(url).indexOf('api/ladder-free-claim') >= 0) return { claim: { id: 'c3', name: 'Zoe' }, edit_code: 'FR33-CODE', entry_amount: 100 };
         if (String(url).indexOf('api/ladder-checkout') >= 0) return { checkout_url: 'https://checkout.bachs.io/c/x', checkout_id: 'chk_x', edit_code: 'ABCD-2345', amount: 100, action: 'join' };
         if (String(url).indexOf('api/ladder') === 0) return LADDER_ROWS;
@@ -80,6 +82,13 @@ setTimeout(async () => {
   T('my spot unlocks with edit code (no email needed)', d.getElementById('myEdit').hidden === false && d.getElementById('myName').textContent.indexOf('Ada') >= 0);
   T('my spot rank comes from ladder info', d.getElementById('myRank').textContent.indexOf('#1') >= 0);
   T('my spot has a profile photo picker', d.getElementById('myPhoto') !== null && d.getElementById('myPhoto').type === 'file');
+  await new Promise(r => setTimeout(r, 120));
+  T('overtake earnings render (owed ₦500 + receipt proof)', d.getElementById('myPayoutAmt').textContent.indexOf('500') >= 0 && d.getElementById('myReceipt').textContent.indexOf('RECEIPT') >= 0 && d.getElementById('myPayoutBtn').style.display !== 'none');
+
+  d.getElementById('dbgFab').click();
+  T('debug panel opens and logs API calls', d.getElementById('dbgPanel').hidden === false && d.getElementById('dbgList').textContent.indexOf('api/ladder') >= 0);
+  d.getElementById('dbgClose').click();
+  T('debug panel closes', d.getElementById('dbgPanel').hidden === true);
 
   /* free founder claim → persistent copyable edit-code modal */
   d.getElementById('myClose').click();

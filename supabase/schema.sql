@@ -324,6 +324,24 @@ $$;
 -- join: insert the entry (rank emerges from sorting).
 -- overtake: target must still exist; the 2× price lands the payer above them.
 -- Both idempotent; nothing about a settled entry ever changes.
+-- OVERTAKE REVENUE SHARE: when B overtakes A, A earns 50% of B's payment.
+-- Rows are minted by settle_ladder() atomically at settlement, idempotent on
+-- ref (the overtaker's checkout_id). The overtaken holder claims the money
+-- with their edit code — the receipt for the spot they owned (POST
+-- /api/ladder-payout); ops completes the transfer via Bachs (→ 'paid').
+create table if not exists public.ladder_payouts (
+  id          uuid primary key default gen_random_uuid(),
+  claim_id    uuid not null references public.claims(id) on delete cascade,
+  amount_ngn  bigint not null check (amount_ngn > 0),
+  ref         text not null unique,
+  status      text not null default 'owed' check (status in ('owed','claimed','paid')),
+  destination text,
+  claimed_at  timestamptz,
+  created_at  timestamptz not null default now()
+);
+create index if not exists ladder_payouts_claim_idx on public.ladder_payouts (claim_id, status);
+alter table public.ladder_payouts enable row level security;
+
 create or replace function public.settle_ladder(p_checkout_id text)
 returns jsonb
 language plpgsql
@@ -350,6 +368,14 @@ begin
   insert into public.ladder_entries (claim_id, amount)
   values (l.claim_id, l.amount)
   on conflict (claim_id) do update set amount = excluded.amount, paid_at = now();
+
+  /* overtake revenue share: 50% of the taker's payment to the overtaken
+     holder — idempotent on ref, atomic with settlement */
+  if l.action = 'overtake' then
+    insert into public.ladder_payouts (claim_id, amount_ngn, ref)
+    values (l.target_claim_id, greatest(1, floor(l.amount / 2.0)), l.checkout_id)
+    on conflict (ref) do nothing;
+  end if;
 
   update public.ladder_ledger set status = 'settled' where id = l.id;
   return jsonb_build_object('settled', true);

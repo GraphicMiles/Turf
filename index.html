@@ -143,6 +143,15 @@
         <div class="form-row"><label class="form-label">PROFILE PHOTO</label>
           <input class="form-input" id="myPhoto" type="file" accept="image/webp,image/jpeg,image/png" /></div>
         <span class="cta full" id="mySave"><p>Save changes ✓</p><i class="fa-solid fa-floppy-disk"></i></span>
+        <div class="payout-box" id="myPayoutBox">
+          <div class="feed-head mono">OVERTAKE EARNINGS — 50% OF ANY TAKEOVER 💸</div>
+          <p class="payout-amt mono" id="myPayoutAmt">₦0</p>
+          <p class="dock-sub" id="myPayoutSub">When someone pays 2× to overtake you, half their money lands here.</p>
+          <div class="form-row"><label class="form-label" for="myPayoutDest">PAYOUT EMAIL</label>
+            <input class="form-input" id="myPayoutDest" type="email" maxlength="120" placeholder="you@email.com" /></div>
+          <span class="cta full" id="myPayoutBtn"><p>Claim my money →</p><i class="fa-solid fa-sack-dollar"></i></span>
+          <p class="mono micro-note" id="myReceipt"></p>
+        </div>
         <div class="feed-head mono" style="margin-top:16px">MY FEED — POST MEDIA TO YOUR SPOT</div>
         <div class="composer">
           <input class="form-input" id="myCaption" type="text" maxlength="140" placeholder="Caption (optional)" />
@@ -165,6 +174,18 @@
       <span class="cta full" id="codeCopy"><p>Copy code</p><i class="fa-solid fa-copy"></i></span>
       <p class="mono micro-note">ALSO SAVED ON THIS DEVICE (🔑 MY SPOT FINDS IT AUTOMATICALLY)</p>
     </div>
+  </div>
+
+  <!-- ======================= debug panel (🐞 bottom-left) ======================= -->
+  <button class="dbg-fab mono" id="dbgFab" title="Debug panel (Ctrl+Shift+D)">🐞 DEBUG</button>
+  <div class="dbg-panel" id="dbgPanel" hidden>
+    <div class="dbg-head mono">🔧 TURF DEBUG <span id="dbgMode"></span>
+      <button class="dbg-x" id="dbgClose">×</button></div>
+    <div class="dbg-tools">
+      <button class="dbg-btn mono" id="dbgCopy">COPY REPORT</button>
+      <button class="dbg-btn mono" id="dbgClear">CLEAR</button>
+    </div>
+    <div class="dbg-list" id="dbgList"></div>
   </div>
 
   <div id="toastContainer"></div>

@@ -13,6 +13,8 @@
    ========================================================================== */
 const crypto = require('crypto');
 const getSupabase = require('../lib/supabase.js');
+
+const { objectUrl } = require('../lib/storage.js');
 const { FIELDS } = require('../world-core.js');
 const { cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed, safeRedirectBase } = require('../lib/validate.js');
 const { generateEditCode, hashEditCode } = require('../lib/editcode.js');
@@ -127,10 +129,7 @@ exports.default = async (req, res) => {
   if (/^[0-9a-f-]{36}\.(webp|gif|mp4|m4a|mp3|wav|ogg)$/i.test(imagePath)) {
     /* avatar must be an image type */
     if (/^[0-9a-f-]{36}\.(webp|gif)$/i.test(imagePath)) {
-      try {
-        const { data: obj, error: statErr } = await supa.storage.from('people').stat(imagePath);
-        if (!statErr && obj) imageUrl = supa.storage.from('people').getPublicUrl(imagePath).data.publicUrl;
-      } catch (e) { /* ignore */ }
+      imageUrl = await objectUrl(supa, imagePath); /* may be null — claim proceeds without photo */
     }
   }
 

@@ -7,6 +7,8 @@
    (insert_claim_sequential) when the schema migration has been applied. */
 const { N, WORLD, build, assignCells, macroKeyOf, FIELDS } = require('../world-core.js');
 const getSupabase = require('../lib/supabase.js');
+
+const { objectUrl } = require('../lib/storage.js');
 const { cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
 const { generateEditCode, hashEditCode } = require('../lib/editcode.js');
 
@@ -132,10 +134,7 @@ exports.default = async (req, res) => {
   let imageUrl = null;
   const imagePath = String(raw.image_path || '');
   if (/^[0-9a-f-]{36}\.webp$/.test(imagePath)) {
-    try {
-      const { data: obj, error: statErr } = await supa.storage.from('people').stat(imagePath);
-      if (!statErr && obj) imageUrl = supa.storage.from('people').getPublicUrl(imagePath).data.publicUrl;
-    } catch (e) { /* ignore unreadable path */ }
+    imageUrl = await objectUrl(supa, imagePath); /* may be null — claim proceeds without photo */
   }
 
   /* edit code: generated here, returned ONCE, only the hash is stored */

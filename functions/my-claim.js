@@ -14,6 +14,8 @@
    ip / email / checkout_id / charge_id / edit_code_hash never leave the server.
    ========================================================================== */
 const getSupabase = require('../lib/supabase.js');
+
+const { objectUrl } = require('../lib/storage.js');
 const { FIELDS } = require('../world-core.js');
 const { cleanText, cleanClaimBody, escapeIlike, isEmail, clientIp, originAllowed } = require('../lib/validate.js');
 const { hashEditCode, looksLikeEditCode } = require('../lib/editcode.js');
@@ -154,10 +156,7 @@ exports.default = async (req, res) => {
     /* photo change: verify the uploaded object, swap the public URL */
     const imagePath = String(body.image_path || '');
     if (/^[0-9a-f-]{36}\.webp$/.test(imagePath)) {
-      try {
-        const { data: obj, error: statErr } = await supa.storage.from('people').stat(imagePath);
-        if (!statErr && obj) patch.image_url = supa.storage.from('people').getPublicUrl(imagePath).data.publicUrl;
-      } catch (e) { /* ignore unreadable path */ }
+      patch.image_url = await objectUrl(supa, imagePath); /* null → no photo change */
     }
 
     /* code-auth with nothing to update = "unlock/lookup" — return the claim */

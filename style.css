@@ -651,3 +651,38 @@ html.ladder-page, html.ladder-page body { overflow-y: auto; height: auto; min-he
   user-select: all; -webkit-user-select: all;
 }
 .cta.is-busy { opacity: 0.6; pointer-events: none; }
+
+/* ---- overtake earnings (payout box) ---- */
+.payout-box {
+  margin-top: 14px; padding: 12px; text-align: center;
+  background: var(--bg-card-alt); border: 2.5px solid var(--border-color);
+  border-radius: var(--border-radius); box-shadow: var(--shadow-sm);
+}
+.payout-amt { font-size: 1.5rem; font-weight: 700; color: var(--accent-green); margin: 4px 0; }
+
+/* ---- debug panel ---- */
+.dbg-fab {
+  position: fixed; left: 10px; bottom: 10px; z-index: 90;
+  font-size: 0.55rem; font-weight: 700; letter-spacing: 0.08em;
+  background: var(--bg-card); color: var(--text-dim);
+  border: 2px solid var(--border-color); border-radius: var(--border-radius-pill);
+  box-shadow: var(--shadow-sm); padding: 5px 10px; cursor: pointer;
+}
+.dbg-fab:hover { background: var(--bg-card-alt); color: var(--ink); }
+.dbg-panel {
+  position: fixed; left: 10px; bottom: 44px; z-index: 90;
+  width: min(340px, calc(100vw - 20px)); max-height: 62vh; overflow-y: auto;
+  background: var(--bg-card); border: 2.5px solid var(--border-color);
+  border-radius: var(--border-radius); box-shadow: var(--shadow-md); padding: 8px;
+}
+.dbg-head { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; display: flex; align-items: center; gap: 6px; }
+.dbg-head #dbgMode { color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbg-x { border: 2px solid var(--border-color); background: var(--bg-card); border-radius: var(--border-radius-sm); cursor: pointer; font-weight: 700; padding: 0 7px; }
+.dbg-tools { display: flex; gap: 6px; margin: 6px 0; }
+.dbg-btn { flex: 1; font-size: 0.52rem; font-weight: 700; letter-spacing: 0.08em; background: var(--bg-card-alt); border: 2px solid var(--border-color); border-radius: var(--border-radius-sm); padding: 4px; cursor: pointer; }
+.dbg-btn:hover { background: var(--accent-yellow); }
+.dbg-list { display: flex; flex-direction: column; gap: 4px; }
+.dbg-row { font-size: 0.55rem; font-weight: 700; border: 1.5px solid var(--border-color); border-radius: var(--border-radius-sm); padding: 4px 6px; word-break: break-all; }
+.dbg-ok { color: var(--ink); border-color: var(--accent-green); }
+.dbg-bad, .dbg-err { color: var(--primary); border-color: var(--primary); }
+.dbg-body { font-size: 0.52rem; color: var(--text-dim); margin-top: 2px; white-space: pre-wrap; }
